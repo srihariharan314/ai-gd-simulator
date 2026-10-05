@@ -606,13 +606,14 @@
       try {
         const res = await API.Rooms.create(topic, category || 'General', 120, selectedDuration || 300, 6);
         if (res && res.room) {
-          window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}`;
+          localStorage.setItem('gd_last_room', JSON.stringify(res.room));
+          window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}&topic=${encodeURIComponent(topic)}&isHost=1`;
           return;
         }
       } catch (err) {
         console.warn('Could not create room via API, falling back:', err);
       }
-      window.location.href = `/human-room.html?action=create&topic=${encodeURIComponent(topic)}&duration=${selectedDuration}`;
+      window.location.href = `/human-room.html?action=create&topic=${encodeURIComponent(topic)}&duration=${selectedDuration}&isHost=1`;
     }
   }
 

@@ -394,6 +394,60 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
   });
 });
 
+// ─── POST /api/rooms/:roomId/start ──────────────────────────────────────────
+// Host starts discussion via HTTP REST (critical for serverless / Vercel)
+router.post('/:roomId/start', authMiddleware, (req, res) => {
+  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  try {
+    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP WHERE room_id = ?")
+      .run(room.room_id);
+  } catch (err) {
+    console.warn('Error starting room in DB:', err.message);
+  }
+
+  res.json({
+    success: true,
+    status: 'ACTIVE',
+    roomId: room.room_id,
+    roomCode: room.room_code,
+    gd_duration: room.gd_duration || 300
+  });
+});
+
+// ─── POST /api/rooms/:roomId/end ────────────────────────────────────────────
+// Host ends discussion via HTTP REST
+router.post('/:roomId/end', authMiddleware, (req, res) => {
+  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  try {
+    db.prepare("UPDATE human_rooms SET status = 'COMPLETED', ended_at = CURRENT_TIMESTAMP WHERE room_id = ?")
+      .run(room.room_id);
+
+    db.prepare(`
+      UPDATE gd_sessions
+      SET end_time = CURRENT_TIMESTAMP,
+          status = 'completed',
+          duration = CAST((julianday('now') - julianday(start_time)) * 86400 AS INTEGER)
+      WHERE room_id = ? AND status = 'active'
+    `).run(room.room_id);
+  } catch (err) {
+    console.warn('Error ending room in DB:', err.message);
+  }
+
+  res.json({
+    success: true,
+    status: 'COMPLETED',
+    roomId: room.room_id
+  });
+});
+
 // ─── POST /api/rooms/:roomId/cancel ─────────────────────────────────────────
 // Host cancels room before start
 router.post('/:roomId/cancel', authMiddleware, (req, res) => {

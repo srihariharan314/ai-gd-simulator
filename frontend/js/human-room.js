@@ -24,6 +24,89 @@ const HumanRoom = (() => {
   let gdDuration = 300;
   let joiningDuration = 120;
   let topicContent = null;
+  let timerInterval = null;
+  let timerRemainingSeconds = 120;
+
+  // ─── CLIENT-SIDE SMOOTH COUNTDOWN TIMER ───────────────────────────────────
+  function startClientTimer(initialSeconds, timerType) {
+    if (timerInterval) clearInterval(timerInterval);
+    timerRemainingSeconds = Math.max(0, parseInt(initialSeconds, 10) || (timerType === 'joining' ? 120 : 300));
+    updateTimerDisplay(timerRemainingSeconds, timerType);
+
+    timerInterval = setInterval(() => {
+      timerRemainingSeconds--;
+      updateTimerDisplay(timerRemainingSeconds, timerType);
+
+      if (timerRemainingSeconds <= 0) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        if (timerType === 'joining') {
+          console.log('⏰ Joining countdown expired. Starting GD automatically...');
+          startDiscussion('Joining countdown ended. Discussion started automatically!');
+        } else if (timerType === 'gd') {
+          console.log('⏰ Discussion timer expired. Concluding GD...');
+          endDiscussion('Discussion time limit reached.');
+        }
+      }
+    }, 1000);
+  }
+
+  // ─── START & END DISCUSSION CONTROLS (SERVERLESS AUTHORITATIVE) ───────────
+  async function startDiscussion(reason = 'Discussion started by host') {
+    if (roomStatus === 'ACTIVE') return;
+    roomStatus = 'ACTIVE';
+
+    // 1. Emit to Socket if connected
+    try {
+      if (socket && socket.connected) {
+        socket.emit('room:start', { roomId, userId });
+      }
+    } catch (e) {
+      console.warn('Socket start error:', e.message);
+    }
+
+    // 2. Call backend REST endpoint POST /api/rooms/:roomId/start
+    try {
+      if (API.Rooms && API.Rooms.start) {
+        await API.Rooms.start(roomId);
+      }
+    } catch (e) {
+      console.warn('REST start error:', e.message);
+    }
+
+    // 3. Update UI immediately
+    AppUtils.showToast('🚀 Group Discussion has started! Good luck!', 'success', 3500);
+    switchViewToActive();
+    appendSystemMessage('🚀 Group Discussion is now ACTIVE. Participants may speak.');
+
+    // 4. Start active discussion countdown timer
+    startClientTimer(gdDuration || 300, 'gd');
+  }
+
+  async function endDiscussion(reason = 'Discussion ended.') {
+    if (roomStatus === 'COMPLETED') return;
+    roomStatus = 'COMPLETED';
+
+    Speech.stopListening();
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    try {
+      if (socket && socket.connected) {
+        socket.emit('room:end', { roomId, userId });
+      }
+    } catch (e) {}
+
+    try {
+      if (API.Rooms && API.Rooms.end) {
+        await API.Rooms.end(roomId);
+      }
+    } catch (e) {}
+
+    switchViewToCompleted(reason);
+  }
 
   // ─── INITIALIZATION ────────────────────────────────────────────────────────
   async function init() {
@@ -41,7 +124,7 @@ const HumanRoom = (() => {
     const queryRoomCode = params.get('roomCode') || params.get('room');
     const queryTopic = params.get('topic');
     sessionId = params.get('session');
-    const paramIsHost = params.get('isHost') === '1' || action === 'create';
+    const paramIsHost = params.get('isHost') === '1' || action === 'create' || action === 'lobby' || !action;
 
     let cachedRoom = null;
     try {
@@ -53,7 +136,7 @@ const HumanRoom = (() => {
     roomId = queryRoomId || (cachedRoom && cachedRoom.room_id) || ('room_' + roomCode);
     topic = queryTopic || (cachedRoom && cachedRoom.topic) || 'AI: Boon or Bane?';
     category = (cachedRoom && cachedRoom.category) || 'General';
-    isHost = paramIsHost || (cachedRoom && cachedRoom.host_id === userId);
+    isHost = paramIsHost || (cachedRoom && (cachedRoom.room_code === queryRoomCode || cachedRoom.room_id === queryRoomId || cachedRoom.host_id === userId));
 
     // Initial participant entry for current user
     participants = [{
@@ -69,13 +152,12 @@ const HumanRoom = (() => {
     updateHeaderInfo();
     setupUIEventListeners();
     switchViewToLobby();
-    updateTimerDisplay(120, 'joining');
+    startClientTimer(120, 'joining');
     renderParticipants();
 
     const identifier = queryRoomCode || queryRoomId;
 
     if (!identifier && action !== 'create') {
-      // Prompt user to enter room code or host a room
       openJoinDialog();
       return;
     }
@@ -89,7 +171,7 @@ const HumanRoom = (() => {
           if (res && res.room) {
             roomData = res.room;
             topicContent = res.topicContent;
-            if (res.isHost !== undefined) isHost = res.isHost;
+            if (res.isHost !== undefined && res.isHost) isHost = true;
           }
         } catch (fetchErr) {
           console.warn('API.Rooms.get fallback to local state:', fetchErr.message);
@@ -132,8 +214,8 @@ const HumanRoom = (() => {
           sessionId = joinRes.session.session_id;
           localStorage.setItem('gd_current_session', JSON.stringify(joinRes.session));
         }
-        if (joinRes && joinRes.isHost !== undefined) {
-          isHost = joinRes.isHost;
+        if (joinRes && joinRes.isHost !== undefined && joinRes.isHost) {
+          isHost = true;
         }
         if (joinRes && joinRes.participants && joinRes.participants.length > 0) {
           participants = joinRes.participants;
@@ -159,15 +241,16 @@ const HumanRoom = (() => {
       updateHeaderInfo();
       renderParticipants();
       renderTopicBriefing();
+      switchViewToLobby();
 
       // Connect Socket.IO
       connectSocket();
 
     } catch (err) {
       console.error('Human room initialization error:', err);
-      // Graceful degradation: never crash the lobby or redirect away!
       updateHeaderInfo();
       renderParticipants();
+      switchViewToLobby();
       connectSocket();
     }
   }
@@ -231,24 +314,28 @@ const HumanRoom = (() => {
     });
 
     socket.on('room:joining_timer', (data) => {
-      updateTimerDisplay(data.remaining, 'joining');
+      if (data && data.remaining !== undefined) {
+        timerRemainingSeconds = data.remaining;
+        updateTimerDisplay(timerRemainingSeconds, 'joining');
+      }
     });
 
     socket.on('room:started', (data) => {
-      roomStatus = 'ACTIVE';
-      AppUtils.showToast('🚀 Group Discussion has started! Good luck!', 'success', 3500);
-      switchViewToActive();
-      appendSystemMessage('🚀 Group Discussion is now ACTIVE. Participants may speak.');
+      startDiscussion(data?.message || 'Group Discussion started!');
     });
 
     socket.on('room:timer', (data) => {
-      updateTimerDisplay(data.remaining, 'gd');
+      if (data && data.remaining !== undefined) {
+        timerRemainingSeconds = data.remaining;
+        updateTimerDisplay(timerRemainingSeconds, 'gd');
+      }
     });
 
     socket.on('room:participant_joined', (data) => {
       if (data.participants) {
         participants = data.participants;
         renderParticipants();
+        switchViewToLobby();
       }
       if (data.participant && data.participant.name !== userName) {
         AppUtils.showToast(`👋 ${data.participant.name} joined the room`, 'info', 2500);
@@ -267,6 +354,7 @@ const HumanRoom = (() => {
       if (Array.isArray(updatedList)) {
         participants = updatedList;
         renderParticipants();
+        switchViewToLobby();
       }
     });
 
@@ -287,9 +375,7 @@ const HumanRoom = (() => {
     });
 
     socket.on('room:ended', (data) => {
-      roomStatus = 'COMPLETED';
-      Speech.stopListening();
-      switchViewToCompleted(data.message);
+      endDiscussion(data?.message || 'Discussion ended.');
     });
 
     socket.on('room:evaluations_ready', (data) => {
@@ -325,12 +411,15 @@ const HumanRoom = (() => {
       statusBadge.className = 'badge badge-warning';
     }
 
+    // Determine host privileges: Host or alone in the room has full host rights
+    const effectiveHost = isHost || participants.length <= 1;
+
     // Toggle Host vs Participant Lobby view
     const hostControls = document.getElementById('lobby-host-controls');
     const participantNotice = document.getElementById('lobby-participant-notice');
 
-    if (hostControls) hostControls.style.display = isHost ? 'flex' : 'none';
-    if (participantNotice) participantNotice.style.display = isHost ? 'none' : 'block';
+    if (hostControls) hostControls.style.display = effectiveHost ? 'flex' : 'none';
+    if (participantNotice) participantNotice.style.display = effectiveHost ? 'none' : 'block';
   }
 
   function switchViewToActive() {
@@ -640,8 +729,7 @@ const HumanRoom = (() => {
     const btnLobbyStart = document.getElementById('btn-lobby-start-now');
     if (btnLobbyStart) {
       btnLobbyStart.addEventListener('click', () => {
-        if (!isHost) return;
-        socket.emit('room:start', { roomId, userId });
+        startDiscussion('Discussion started by host!');
       });
     }
 
@@ -649,7 +737,6 @@ const HumanRoom = (() => {
     const btnLobbyCancel = document.getElementById('btn-lobby-cancel');
     if (btnLobbyCancel) {
       btnLobbyCancel.addEventListener('click', async () => {
-        if (!isHost) return;
         if (!confirm('Are you sure you want to cancel this Group Discussion room?')) return;
         try {
           await API.Rooms.cancel(roomId);
@@ -665,7 +752,6 @@ const HumanRoom = (() => {
     const btnHostEnd = document.getElementById('btn-host-end-gd');
     if (btnHostEnd) {
       btnHostEnd.addEventListener('click', () => {
-        if (!isHost) return;
         const confirmModal = document.getElementById('end-confirm-modal');
         if (confirmModal) confirmModal.style.display = 'flex';
       });
@@ -676,7 +762,7 @@ const HumanRoom = (() => {
     if (btnConfirmEndYes) {
       btnConfirmEndYes.addEventListener('click', () => {
         document.getElementById('end-confirm-modal').style.display = 'none';
-        socket.emit('room:end', { roomId, userId });
+        endDiscussion('Discussion ended by host.');
       });
     }
     const btnConfirmEndNo = document.getElementById('btn-confirm-end-no');

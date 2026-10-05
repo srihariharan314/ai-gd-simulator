@@ -302,6 +302,18 @@ const Rooms = {
     });
   },
 
+  async start(roomId) {
+    return apiFetch(`/rooms/${encodeURIComponent(roomId)}/start`, {
+      method: 'POST'
+    });
+  },
+
+  async end(roomId) {
+    return apiFetch(`/rooms/${encodeURIComponent(roomId)}/end`, {
+      method: 'POST'
+    });
+  },
+
   async cancel(roomId) {
     return apiFetch(`/rooms/${encodeURIComponent(roomId)}/cancel`, {
       method: 'POST'
