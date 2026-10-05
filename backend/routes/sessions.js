@@ -16,11 +16,33 @@ router.post('/', authMiddleware, (req, res) => {
 
   const generatedRoomId = room_id || (mode === 'human' ? uuidv4().slice(0, 8).toUpperCase() : null);
 
+  let userId = req.user.user_id;
+
   try {
+    // Self-healing check: guarantee user exists in users table to prevent foreign key errors
+    const userExists = db.prepare('SELECT user_id FROM users WHERE user_id = ?').get(userId);
+    if (!userExists) {
+      try {
+        db.prepare('INSERT OR IGNORE INTO users (user_id, name, email, password) VALUES (?, ?, ?, ?)').run(
+          userId,
+          req.user.name || 'User',
+          req.user.email || `user_${userId}@gd.com`,
+          'session_auth_token'
+        );
+        const checkAgain = db.prepare('SELECT user_id FROM users WHERE user_id = ?').get(userId);
+        if (!checkAgain && req.user.email) {
+          const byEmail = db.prepare('SELECT user_id FROM users WHERE email = ?').get(req.user.email);
+          if (byEmail) userId = byEmail.user_id;
+        }
+      } catch (uErr) {
+        console.warn('Auto-heal user error in sessions.js:', uErr.message);
+      }
+    }
+
     const result = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'active')
-    `).run(req.user.user_id, mode, topic, category || 'General', generatedRoomId);
+    `).run(userId, mode, topic, category || 'General', generatedRoomId);
 
     const session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?')
       .get(result.lastInsertRowid);

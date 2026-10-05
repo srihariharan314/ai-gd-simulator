@@ -18,6 +18,30 @@ function generateRoomCode() {
   return `GD-${randomPart}`;
 }
 
+function ensureUserExists(userId, name, email) {
+  if (!userId) return null;
+  const existing = db.prepare('SELECT user_id FROM users WHERE user_id = ?').get(userId);
+  if (existing) return existing.user_id;
+
+  const mail = email || `user_${userId}@gd.com`;
+  const byEmail = db.prepare('SELECT user_id FROM users WHERE email = ?').get(mail);
+  if (byEmail) return byEmail.user_id;
+
+  try {
+    db.prepare('INSERT OR IGNORE INTO users (user_id, name, email, password) VALUES (?, ?, ?, ?)').run(
+      userId,
+      name || 'User',
+      mail,
+      'ephemeral_token'
+    );
+    const checked = db.prepare('SELECT user_id FROM users WHERE user_id = ? OR email = ?').get(userId, mail);
+    return checked ? checked.user_id : userId;
+  } catch (e) {
+    console.warn('ensureUserExists error in rooms.js:', e.message);
+    return userId;
+  }
+}
+
 // ─── POST /api/rooms ─────────────────────────────────────────────────────────
 // Host creates a new human GD room
 router.post('/', authMiddleware, async (req, res) => {
@@ -62,18 +86,20 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 
   try {
+    const hostUserId = ensureUserExists(req.user.user_id, req.user.name, req.user.email);
+
     // 1. Insert room record
     db.prepare(`
       INSERT INTO human_rooms
       (room_id, room_code, host_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP)
-    `).run(roomId, roomCode, req.user.user_id, cleanTopic, category, topicContent, joinSec, joinDeadline, gdSec, maxPart);
+    `).run(roomId, roomCode, hostUserId, cleanTopic, category, topicContent, joinSec, joinDeadline, gdSec, maxPart);
 
     // 2. Create host's personal session in gd_sessions
     const sessionRes = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
-    `).run(req.user.user_id, cleanTopic, category, roomId);
+    `).run(hostUserId, cleanTopic, category, roomId);
     const hostSessionId = sessionRes.lastInsertRowid;
 
     // 3. Register host as first participant
@@ -82,7 +108,7 @@ router.post('/', authMiddleware, async (req, res) => {
       INSERT INTO room_participants
       (room_id, user_id, name, role, socket_id, is_muted, connection_status, session_id, joined_at)
       VALUES (?, ?, ?, 'host', NULL, 0, 'connected', ?, CURRENT_TIMESTAMP)
-    `).run(roomId, req.user.user_id, hostName, hostSessionId);
+    `).run(roomId, hostUserId, hostName, hostSessionId);
 
     const room = db.prepare('SELECT * FROM human_rooms WHERE room_id = ?').get(roomId);
     const session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(hostSessionId);
@@ -91,7 +117,7 @@ router.post('/', authMiddleware, async (req, res) => {
       room,
       session,
       host: {
-        userId: req.user.user_id,
+        userId: hostUserId,
         name: hostName,
         role: 'host'
       }
@@ -273,12 +299,14 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
       return res.status(400).json({ error: 'This GD is full.' });
     }
 
+    const validUserId = ensureUserExists(userId, userName, req.user?.email);
+
     // Create a personal session for this participant
-    const role = (userId === room.host_id) ? 'host' : 'participant';
+    const role = (validUserId === room.host_id) ? 'host' : 'participant';
     const sessionRes = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
-    `).run(userId, room.topic, room.category || 'General', room.room_id);
+    `).run(validUserId, room.topic, room.category || 'General', room.room_id);
 
     const sessionId = sessionRes.lastInsertRowid;
     session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(sessionId);
@@ -288,7 +316,7 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
       INSERT INTO room_participants
       (room_id, user_id, name, role, is_muted, connection_status, session_id, joined_at)
       VALUES (?, ?, ?, ?, 0, 'connected', ?, CURRENT_TIMESTAMP)
-    `).run(room.room_id, userId, userName, role, sessionId);
+    `).run(room.room_id, validUserId, userName, role, sessionId);
 
     participant = db.prepare('SELECT * FROM room_participants WHERE id = ?').get(partRes.lastInsertRowid);
   }
