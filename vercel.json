@@ -6,6 +6,14 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/gd/join/:code",
+      "destination": "/frontend/human-room.html?action=join&roomCode=:code"
+    },
+    {
+      "source": "/join/:code",
+      "destination": "/frontend/human-room.html?action=join&roomCode=:code"
+    },
+    {
       "source": "/",
       "destination": "/frontend/index.html"
     },
