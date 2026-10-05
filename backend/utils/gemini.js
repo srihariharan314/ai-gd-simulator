@@ -148,9 +148,12 @@ async function geminiChat(systemPrompt, history = [], userMessage, apiKey) {
       ]
     };
 
-    const response = await fetch(`${GEMINI_API_URL}?key=${key}`, {
+    const response = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(key)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': key
+      },
       body: JSON.stringify(requestBody)
     });
 

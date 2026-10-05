@@ -206,6 +206,25 @@ for (const sql of MIGRATIONS) {
   }
 }
 
+// Ensure default demo user exists (especially on fresh serverless /tmp databases)
+try {
+  const bcrypt = require('bcryptjs');
+  const demoEmail = 'demo@gd.com';
+  const existing = db.prepare('SELECT user_id FROM users WHERE email = ?').get(demoEmail);
+  if (!existing) {
+    const hash = bcrypt.hashSync('demo123', 10);
+    db.prepare('INSERT INTO users (name, email, password, bio) VALUES (?, ?, ?, ?)').run(
+      'Demo User',
+      demoEmail,
+      hash,
+      'Aspirant preparing for placement & MBA group discussions.'
+    );
+    console.log('👤 Seeded demo user: demo@gd.com / demo123');
+  }
+} catch (e) {
+  // Ignore if bcrypt not available or concurrent insert
+}
+
 console.log('✅ Database initialized successfully via node:sqlite:', dbFilePath);
 
 module.exports = db;
