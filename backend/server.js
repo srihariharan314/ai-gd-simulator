@@ -333,12 +333,14 @@ io.on('connection', (socket) => {
       room.hostDisconnectTimeout = null;
     }
 
+    const isHost = (userId && userId === room.hostId);
+
     // Add or update participant
     const participant = {
       socketId: socket.id,
       userId,
       name: userName,
-      role: 'host',
+      role: isHost ? 'host' : 'participant',
       isMuted: false,
       isSpeaking: false,
       isConnected: true
@@ -350,6 +352,11 @@ io.on('connection', (socket) => {
     } else {
       room.participants.push(participant);
     }
+
+    // Authoritatively enforce exactly ONE host based on room.hostId
+    room.participants.forEach(p => {
+      p.role = (p.userId && p.userId === room.hostId) ? 'host' : 'participant';
+    });
 
     // Start joining countdown if not already running and room is in lobby
     if (room.status === 'WAITING_FOR_PARTICIPANTS' && !room.joiningInterval && room.joiningTimerRemaining > 0) {
@@ -371,7 +378,8 @@ io.on('connection', (socket) => {
       roomId: room.roomId,
       roomCode: room.roomCode,
       topic: room.topic,
-      isHost: true,
+      isHost,
+      hostId: room.hostId,
       status: room.status,
       participants: room.participants,
       joiningTimerRemaining: room.joiningTimerRemaining,
@@ -383,7 +391,7 @@ io.on('connection', (socket) => {
       participants: room.participants
     });
 
-    console.log(`🏠 Host ${userName} connected to room ${room.roomCode} (${room.participants.length} participants)`);
+    console.log(`🏠 User ${userName} (Host: ${isHost}) connected to room ${room.roomCode} (${room.participants.length} participants)`);
   });
 
   // Participant joins an existing room
@@ -422,7 +430,7 @@ io.on('connection', (socket) => {
     socket.roomId = room.roomId;
     socket.join(room.roomId);
 
-    const isHost = (userId && userId === room.hostId) || (existingIdx >= 0 && room.participants[existingIdx].role === 'host');
+    const isHost = (userId && userId === room.hostId);
 
     const participant = {
       socketId: socket.id,
@@ -440,12 +448,18 @@ io.on('connection', (socket) => {
       room.participants.push(participant);
     }
 
+    // Authoritatively enforce exactly ONE host based on room.hostId
+    room.participants.forEach(p => {
+      p.role = (p.userId && p.userId === room.hostId) ? 'host' : 'participant';
+    });
+
     // Notify joiner
     socket.emit('room:joined', {
       roomId: room.roomId,
       roomCode: room.roomCode,
       topic: room.topic,
       isHost,
+      hostId: room.hostId,
       status: room.status,
       participants: room.participants,
       joiningTimerRemaining: room.joiningTimerRemaining,

@@ -46,7 +46,7 @@ function ensureUserExists(userId, name, email) {
  * Self-healing room lookup for serverless environments (e.g. Vercel)
  * where each lambda instance may have an isolated ephemeral /tmp SQLite database.
  */
-function findOrSelfHealRoom(identifier, fallbackTopic, hostUser) {
+function findOrSelfHealRoom(identifier, fallbackTopic, userObj, explicitHostId) {
   if (!identifier) return null;
   const raw = String(identifier).trim();
   const upper = raw.toUpperCase();
@@ -81,12 +81,25 @@ function findOrSelfHealRoom(identifier, fallbackTopic, hostUser) {
     roomId = raw.startsWith('room_') ? raw : ('room_' + roomCode);
   }
 
-  // Ensure host exists in users table (guarantees foreign key constraints never fail)
-  let hostId = 1;
-  if (hostUser && hostUser.user_id) {
-    hostId = ensureUserExists(hostUser.user_id, hostUser.name, hostUser.email);
+  // 3. Derive host_id reliably:
+  let hostId = null;
+  if (explicitHostId) {
+    hostId = parseInt(explicitHostId, 10);
   } else {
-    hostId = ensureUserExists(1, 'Host', 'host@gd.com');
+    const existingSession = db.prepare('SELECT user_id FROM gd_sessions WHERE room_id = ? ORDER BY session_id ASC LIMIT 1').get(roomId);
+    if (existingSession && existingSession.user_id) {
+      hostId = existingSession.user_id;
+    }
+  }
+
+  // If still unknown, check if userObj is actively creating the room
+  if (!hostId) {
+    if (userObj && userObj.isCreating) {
+      hostId = ensureUserExists(userObj.user_id, userObj.name, userObj.email);
+    } else {
+      // Default to room creator (1) so a joining participant is NEVER made host!
+      hostId = ensureUserExists(1, 'Host', 'demo@gd.com');
+    }
   }
 
   const topic = (fallbackTopic && fallbackTopic.trim()) || 'AI: Boon or Bane?';
@@ -99,6 +112,16 @@ function findOrSelfHealRoom(identifier, fallbackTopic, hostUser) {
       (room_id, room_code, host_id, topic, category, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
       VALUES (?, ?, ?, ?, 'General', ?, ?, 300, 6, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP)
     `).run(roomId, roomCode, hostId, topic, joinSec, joinDeadline);
+
+    // Register host in room_participants so participants always see the host
+    const hostUserRecord = db.prepare('SELECT user_id, name FROM users WHERE user_id = ?').get(hostId);
+    if (hostUserRecord) {
+      db.prepare(`
+        INSERT OR IGNORE INTO room_participants
+        (room_id, user_id, name, role, is_muted, connection_status, joined_at)
+        VALUES (?, ?, ?, 'host', 0, 'connected', CURRENT_TIMESTAMP)
+      `).run(roomId, hostUserRecord.user_id, hostUserRecord.name);
+    }
 
     return db.prepare('SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?').get(roomId, roomCode);
   } catch (err) {
@@ -155,7 +178,7 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     const hostUserId = ensureUserExists(req.user.user_id, req.user.name, req.user.email);
 
-    // 1. Insert room record
+    // 1. Insert room record with authoritative host_id
     db.prepare(`
       INSERT INTO human_rooms
       (room_id, room_code, host_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
@@ -169,7 +192,7 @@ router.post('/', authMiddleware, async (req, res) => {
     `).run(hostUserId, cleanTopic, category, roomId);
     const hostSessionId = sessionRes.lastInsertRowid;
 
-    // 3. Register host as first participant
+    // 3. Register host as first participant with role: 'host'
     const hostName = req.user.name || 'Host';
     db.prepare(`
       INSERT INTO room_participants
@@ -204,7 +227,7 @@ router.get('/validate/:code', (req, res) => {
   }
 
   // Look up by room_code or room_id with serverless self-healing fallback
-  const room = findOrSelfHealRoom(code, req.query.topic, req.user);
+  const room = findOrSelfHealRoom(code, req.query.topic, req.user, req.query.hostId);
 
   if (!room) {
     return res.status(404).json({ valid: false, error: 'Invalid GD room code.', reason: 'not_found' });
@@ -228,7 +251,6 @@ router.get('/validate/:code', (req, res) => {
 
   // Check deadline
   if (room.join_deadline && new Date(room.join_deadline).getTime() < Date.now() && room.status === 'WAITING_FOR_PARTICIPANTS') {
-    // Check if anyone joined
     const participantCount = db.prepare(`
       SELECT COUNT(*) as count FROM room_participants WHERE room_id = ? AND connection_status != 'left'
     `).get(room.room_id).count;
@@ -270,13 +292,13 @@ router.get('/validate/:code', (req, res) => {
 // Get complete room details, participants, and status
 router.get('/:roomId', authMiddleware, (req, res) => {
   const roomId = req.params.roomId;
-  const room = findOrSelfHealRoom(roomId, req.query.topic, req.user);
+  const room = findOrSelfHealRoom(roomId, req.query.topic, req.user, req.query.hostId);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
   }
 
-  const participants = db.prepare(`
+  const rawParticipants = db.prepare(`
     SELECT p.*, u.avatar
     FROM room_participants p
     LEFT JOIN users u ON p.user_id = u.user_id
@@ -284,18 +306,25 @@ router.get('/:roomId', authMiddleware, (req, res) => {
     ORDER BY p.id ASC
   `).all(room.room_id);
 
+  // Derive role authoritatively: ONLY user_id === room.host_id is 'host'
+  const participants = rawParticipants.map(p => ({
+    ...p,
+    role: (p.user_id === room.host_id) ? 'host' : 'participant'
+  }));
+
+  const isHost = (req.user.user_id === room.host_id);
+
   let parsedContent = null;
   if (room.topic_content) {
     try { parsedContent = JSON.parse(room.topic_content); } catch { parsedContent = null; }
   }
-
-  const isHost = req.user.user_id === room.host_id;
 
   res.json({
     room,
     topicContent: parsedContent,
     participants,
     isHost,
+    hostId: room.host_id,
     currentUser: {
       userId: req.user.user_id,
       name: req.user.name,
@@ -308,7 +337,7 @@ router.get('/:roomId', authMiddleware, (req, res) => {
 // Authenticated participant joins room and receives session
 router.post('/:roomId/join', authMiddleware, (req, res) => {
   const roomIdParam = req.params.roomId;
-  const room = findOrSelfHealRoom(roomIdParam, req.query.topic, req.user);
+  const room = findOrSelfHealRoom(roomIdParam, req.query.topic, req.user, req.query.hostId);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
@@ -316,6 +345,8 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
 
   const userId = req.user.user_id;
   const userName = req.user.name || 'Participant';
+  const isHost = (userId === room.host_id);
+  const role = isHost ? 'host' : 'participant';
 
   // Check if user is already a registered participant in this room
   let participant = db.prepare(`
@@ -328,9 +359,9 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
     // Reconnecting user
     db.prepare(`
       UPDATE room_participants
-      SET connection_status = 'connected'
+      SET connection_status = 'connected', role = ?
       WHERE id = ?
-    `).run(participant.id);
+    `).run(role, participant.id);
 
     if (participant.session_id) {
       session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(participant.session_id);
@@ -362,7 +393,6 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
     const validUserId = ensureUserExists(userId, userName, req.user?.email);
 
     // Create a personal session for this participant
-    const role = (validUserId === room.host_id) ? 'host' : 'participant';
     const sessionRes = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
@@ -371,7 +401,7 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
     const sessionId = sessionRes.lastInsertRowid;
     session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(sessionId);
 
-    // Register participant
+    // Register participant with authoritative role derived from room.host_id
     const partRes = db.prepare(`
       INSERT INTO room_participants
       (room_id, user_id, name, role, is_muted, connection_status, session_id, joined_at)
@@ -381,16 +411,25 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
     participant = db.prepare('SELECT * FROM room_participants WHERE id = ?').get(partRes.lastInsertRowid);
   }
 
-  const participants = db.prepare(`
+  const rawParticipants = db.prepare(`
     SELECT * FROM room_participants WHERE room_id = ?
   `).all(room.room_id);
+
+  const participants = rawParticipants.map(p => ({
+    ...p,
+    role: (p.user_id === room.host_id) ? 'host' : 'participant'
+  }));
 
   res.json({
     room,
     session,
-    participant,
+    participant: {
+      ...participant,
+      role: (participant.user_id === room.host_id) ? 'host' : 'participant'
+    },
     participants,
-    isHost: userId === room.host_id
+    isHost,
+    hostId: room.host_id
   });
 });
 
@@ -400,6 +439,11 @@ router.post('/:roomId/start', authMiddleware, (req, res) => {
   const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  // Security check: Only the actual host can start!
+  if (req.user.user_id !== room.host_id) {
+    return res.status(403).json({ error: 'Forbidden: Only the host can start this Group Discussion.' });
   }
 
   try {
@@ -424,6 +468,11 @@ router.post('/:roomId/end', authMiddleware, (req, res) => {
   const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  // Security check: Only the actual host can end!
+  if (req.user.user_id !== room.host_id) {
+    return res.status(403).json({ error: 'Forbidden: Only the host can end this Group Discussion.' });
   }
 
   try {

@@ -16,6 +16,7 @@ const HumanRoom = (() => {
   let userAvatar = '?';
   let sessionId = null;
   let isHost = false;
+  let roomHostId = null;
   let roomStatus = 'WAITING_FOR_PARTICIPANTS'; // 'WAITING_FOR_PARTICIPANTS' | 'ACTIVE' | 'COMPLETED'
   let participants = [];
   let isMuted = false;
@@ -124,7 +125,6 @@ const HumanRoom = (() => {
     const queryRoomCode = params.get('roomCode') || params.get('room');
     const queryTopic = params.get('topic');
     sessionId = params.get('session');
-    const paramIsHost = params.get('isHost') === '1' || action === 'create' || action === 'lobby' || !action;
 
     let cachedRoom = null;
     try {
@@ -136,7 +136,20 @@ const HumanRoom = (() => {
     roomId = queryRoomId || (cachedRoom && cachedRoom.room_id) || ('room_' + roomCode);
     topic = queryTopic || (cachedRoom && cachedRoom.topic) || 'AI: Boon or Bane?';
     category = (cachedRoom && cachedRoom.category) || 'General';
-    isHost = paramIsHost || (cachedRoom && (cachedRoom.room_code === queryRoomCode || cachedRoom.room_id === queryRoomId || cachedRoom.host_id === userId));
+
+    // Authoritative initial role derivation:
+    // Only action === 'create' or isHost === '1' can be true initially; joining users are strictly false
+    if (action === 'create' || params.get('isHost') === '1') {
+      isHost = true;
+      roomHostId = userId;
+    } else if (action === 'join' || params.get('isHost') === '0') {
+      isHost = false;
+    } else if (cachedRoom && cachedRoom.host_id) {
+      roomHostId = cachedRoom.host_id;
+      isHost = (userId !== null && userId !== undefined && userId === roomHostId);
+    } else {
+      isHost = false;
+    }
 
     // Initial participant entry for current user
     participants = [{
@@ -171,7 +184,15 @@ const HumanRoom = (() => {
           if (res && res.room) {
             roomData = res.room;
             topicContent = res.topicContent;
-            if (res.isHost !== undefined && res.isHost) isHost = true;
+            roomHostId = res.room.host_id || res.hostId || roomHostId;
+            if (roomHostId) {
+              isHost = (userId !== null && userId !== undefined && userId === roomHostId);
+            } else if (res.isHost !== undefined) {
+              isHost = !!res.isHost;
+            }
+            if (res.participants && res.participants.length > 0) {
+              participants = res.participants;
+            }
           }
         } catch (fetchErr) {
           console.warn('API.Rooms.get fallback to local state:', fetchErr.message);
@@ -200,7 +221,8 @@ const HumanRoom = (() => {
             roomCode = createRes.room.room_code;
             topic = createRes.room.topic;
             sessionId = createRes.session?.session_id;
-            isHost = true;
+            roomHostId = createRes.room.host_id || userId;
+            isHost = (userId !== null && userId !== undefined && userId === roomHostId);
           }
         } catch (createErr) {
           console.warn('API.Rooms.create fallback:', createErr.message);
@@ -214,8 +236,11 @@ const HumanRoom = (() => {
           sessionId = joinRes.session.session_id;
           localStorage.setItem('gd_current_session', JSON.stringify(joinRes.session));
         }
-        if (joinRes && joinRes.isHost !== undefined && joinRes.isHost) {
-          isHost = true;
+        if (joinRes && joinRes.room) {
+          roomHostId = joinRes.room.host_id || joinRes.hostId || roomHostId;
+          isHost = (userId !== null && userId !== undefined && userId === roomHostId);
+        } else if (joinRes && joinRes.isHost !== undefined) {
+          isHost = !!joinRes.isHost;
         }
         if (joinRes && joinRes.participants && joinRes.participants.length > 0) {
           participants = joinRes.participants;
@@ -284,7 +309,12 @@ const HumanRoom = (() => {
       roomId = data.roomId;
       roomCode = data.roomCode || roomCode;
       topic = data.topic || topic;
-      isHost = data.isHost !== undefined ? data.isHost : isHost;
+      if (data.hostId) {
+        roomHostId = data.hostId;
+        isHost = (userId !== null && userId !== undefined && userId === roomHostId);
+      } else if (data.isHost !== undefined) {
+        isHost = !!data.isHost;
+      }
       roomStatus = data.status || roomStatus;
 
       updateHeaderInfo();
@@ -335,7 +365,9 @@ const HumanRoom = (() => {
       if (data.participants) {
         participants = data.participants;
         renderParticipants();
-        switchViewToLobby();
+        if (roomStatus === 'WAITING_FOR_PARTICIPANTS') {
+          switchViewToLobby();
+        }
       }
       if (data.participant && data.participant.name !== userName) {
         AppUtils.showToast(`👋 ${data.participant.name} joined the room`, 'info', 2500);
@@ -354,7 +386,9 @@ const HumanRoom = (() => {
       if (Array.isArray(updatedList)) {
         participants = updatedList;
         renderParticipants();
-        switchViewToLobby();
+        if (roomStatus === 'WAITING_FOR_PARTICIPANTS') {
+          switchViewToLobby();
+        }
       }
     });
 
@@ -411,15 +445,12 @@ const HumanRoom = (() => {
       statusBadge.className = 'badge badge-warning';
     }
 
-    // Determine host privileges: Host or alone in the room has full host rights
-    const effectiveHost = isHost || participants.length <= 1;
-
-    // Toggle Host vs Participant Lobby view
+    // Toggle Host vs Participant Lobby view strictly based on authoritative isHost
     const hostControls = document.getElementById('lobby-host-controls');
     const participantNotice = document.getElementById('lobby-participant-notice');
 
-    if (hostControls) hostControls.style.display = effectiveHost ? 'flex' : 'none';
-    if (participantNotice) participantNotice.style.display = effectiveHost ? 'none' : 'block';
+    if (hostControls) hostControls.style.display = isHost ? 'flex' : 'none';
+    if (participantNotice) participantNotice.style.display = isHost ? 'none' : 'block';
   }
 
   function switchViewToActive() {
@@ -537,51 +568,114 @@ const HumanRoom = (() => {
   }
 
   function renderParticipants() {
+    // Deduplicate participants by unique key (userId or socketId or name)
+    const uniqueParticipants = [];
+    const seen = new Set();
+    (participants || []).forEach(p => {
+      const key = p.userId || p.socketId || p.name;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        // Authoritative role check: user is host ONLY if matches roomHostId or role === 'host'
+        const isParticipantHost = (roomHostId && p.userId === roomHostId) || p.role === 'host';
+        uniqueParticipants.push({
+          ...p,
+          role: isParticipantHost ? 'host' : 'participant'
+        });
+      }
+    });
+
     // 1. Counter badge
-    const count = participants.length;
+    const count = uniqueParticipants.length;
     const countBadge = document.getElementById('participant-count');
     if (countBadge) countBadge.textContent = count;
 
     const lobbyCount = document.getElementById('lobby-participant-counter');
     if (lobbyCount) lobbyCount.textContent = `${count} Joined`;
 
-    // 2. Waiting Lobby list
+    // 2. Waiting Lobby list - partitioned into 👑 HOST and 👥 PARTICIPANTS
     const lobbyList = document.getElementById('lobby-participants-list');
     if (lobbyList) {
-      if (participants.length === 0) {
+      if (uniqueParticipants.length === 0) {
         lobbyList.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:20px; font-size:0.85rem">Waiting for participants to join...</div>`;
       } else {
-        lobbyList.innerHTML = participants.map(p => {
-          const isMe = p.name === userName || p.userId === userId;
-          const isParticipantHost = p.role === 'host' || p.userId === (isHost ? userId : null);
-          const isOnline = p.isConnected !== false;
+        const hostUser = uniqueParticipants.find(p => p.role === 'host');
+        const regularParticipants = uniqueParticipants.filter(p => p.role !== 'host');
 
-          return `
-            <div class="lobby-participant-card ${isMe ? 'is-self' : ''}">
-              <div class="avatar-ring ${isOnline ? 'online' : 'offline'}">
-                ${(p.name || 'P').charAt(0).toUpperCase()}
+        let html = '';
+
+        // HOST SECTION
+        if (hostUser) {
+          const isMe = hostUser.userId === userId || hostUser.name === userName;
+          const isOnline = hostUser.isConnected !== false;
+          html += `
+            <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.1em; color:#fbbf24; margin:8px 0 6px; display:flex; align-items:center; gap:6px">
+              👑 Room Host
+            </div>
+            <div class="lobby-participant-card ${isMe ? 'is-self' : ''}" style="border-color:rgba(245,158,11,0.35); background:rgba(245,158,11,0.05)">
+              <div class="avatar-ring ${isOnline ? 'online' : 'offline'}" style="border-color:#fbbf24; color:#fbbf24; background:rgba(245,158,11,0.15)">
+                ${(hostUser.name || 'H').charAt(0).toUpperCase()}
               </div>
               <div style="flex:1; min-width:0">
                 <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-                  <span style="font-weight:700; font-size:0.92rem; color:var(--text-primary)">${p.name}</span>
-                  ${isParticipantHost ? '<span class="role-badge host">Host</span>' : '<span class="role-badge participant">Participant</span>'}
+                  <span style="font-weight:700; font-size:0.92rem; color:var(--text-primary)">👑 ${hostUser.name}</span>
+                  <span class="role-badge host">Host</span>
                   ${isMe ? '<span style="font-size:0.75rem; color:#34d399; font-weight:700">(You)</span>' : ''}
                 </div>
                 <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px">
-                  ${isOnline ? '🟢 Connected' : '⏳ Reconnecting...'} · ${p.isMuted ? '🔇 Muted' : '🎤 Microphone Ready'}
+                  ${isOnline ? '🟢 Connected' : '⏳ Reconnecting...'} · ${hostUser.isMuted ? '🔇 Muted' : '🎤 Microphone Ready'}
                 </div>
               </div>
             </div>
           `;
-        }).join('');
+        }
+
+        // PARTICIPANTS SECTION
+        html += `
+          <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.1em; color:#60a5fa; margin:16px 0 6px; display:flex; align-items:center; gap:6px">
+            👥 Participants (${regularParticipants.length})
+          </div>
+        `;
+
+        if (regularParticipants.length === 0) {
+          html += `
+            <div style="text-align:center; color:var(--text-muted); padding:16px; font-size:0.85rem; background:rgba(255,255,255,0.02); border-radius:10px; border:1px dashed rgba(255,255,255,0.08)">
+              Waiting for participants to join via code or invite link...
+            </div>
+          `;
+        } else {
+          html += regularParticipants.map(p => {
+            const isMe = p.userId === userId || p.name === userName;
+            const isOnline = p.isConnected !== false;
+
+            return `
+              <div class="lobby-participant-card ${isMe ? 'is-self' : ''}">
+                <div class="avatar-ring ${isOnline ? 'online' : 'offline'}">
+                  ${(p.name || 'P').charAt(0).toUpperCase()}
+                </div>
+                <div style="flex:1; min-width:0">
+                  <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                    <span style="font-weight:700; font-size:0.92rem; color:var(--text-primary)">${p.name}</span>
+                    <span class="role-badge participant">Participant</span>
+                    ${isMe ? '<span style="font-size:0.75rem; color:#34d399; font-weight:700">(You)</span>' : ''}
+                  </div>
+                  <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px">
+                    ${isOnline ? '🟢 Connected' : '⏳ Reconnecting...'} · ${p.isMuted ? '🔇 Muted' : '🎤 Microphone Ready'}
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        lobbyList.innerHTML = html;
       }
     }
 
     // 3. Active GD Participant Grid
     const activeGrid = document.getElementById('active-participants-grid');
     if (activeGrid) {
-      activeGrid.innerHTML = participants.map(p => {
-        const isMe = p.name === userName || p.userId === userId;
+      activeGrid.innerHTML = uniqueParticipants.map(p => {
+        const isMe = p.userId === userId || p.name === userName;
         const isParticipantHost = p.role === 'host';
         const isOnline = p.isConnected !== false;
 
@@ -596,10 +690,10 @@ const HumanRoom = (() => {
               </div>
             </div>
             <div class="tile-name">
-              ${p.name} ${isMe ? '<span style="color:#34d399">(You)</span>' : ''}
+              ${isParticipantHost ? '👑 ' : ''}${p.name} ${isMe ? '<span style="color:#34d399">(You)</span>' : ''}
             </div>
             <div class="tile-status-bar">
-              ${isParticipantHost ? '<span class="role-badge host" style="font-size:0.65rem">Host</span>' : ''}
+              ${isParticipantHost ? '<span class="role-badge host" style="font-size:0.65rem">👑 Host</span>' : '<span class="role-badge participant" style="font-size:0.65rem">Participant</span>'}
               <span class="mic-status-icon ${p.isMuted ? 'muted' : 'active'}" title="${p.isMuted ? 'Muted' : 'Microphone Ready'}">
                 ${p.isMuted ? '🔇' : '🎤'}
               </span>
