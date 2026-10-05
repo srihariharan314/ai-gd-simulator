@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GD Instructions — GD Simulator</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    .instructions-layout {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .topic-hero {
+      text-align: center;
+      padding: 40px;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(145deg, rgba(108,99,255,0.12), rgba(236,72,153,0.06));
+      border: 1px solid rgba(108,99,255,0.2);
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .topic-hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(108,99,255,0.1), transparent 70%);
+    }
+
+    .topic-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 16px;
+    }
+
+    .topic-text {
+      font-family: var(--font-display);
+      font-size: 1.7rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      line-height: 1.3;
+      margin-bottom: 20px;
+    }
+
+    .topic-meta {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: var(--radius-full);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--glass-border);
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .meta-item .label { color: var(--text-muted); font-size: 0.7rem; }
+    .meta-item .value { font-weight: 700; color: var(--text-primary); }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    .rules-card {
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--glass-border);
+    }
+
+    .rules-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .rules-list li {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .rule-num {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: rgba(108,99,255,0.15);
+      color: var(--accent-secondary);
+      font-size: 0.72rem;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .agents-preview {
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--glass-border);
+    }
+
+    .agent-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .agent-row:last-child { border-bottom: none; }
+
+    .agent-emoji {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem;
+    }
+
+    .agent-details .name { font-size: 0.88rem; font-weight: 700; color: var(--text-primary); }
+    .agent-details .desc { font-size: 0.75rem; color: var(--text-muted); }
+
+    .prep-section {
+      text-align: center;
+      padding: 32px;
+      border-radius: var(--radius-xl);
+      background: rgba(108,99,255,0.06);
+      border: 1px solid rgba(108,99,255,0.2);
+      margin-bottom: 24px;
+    }
+
+    .prep-timer-big {
+      font-family: var(--font-display);
+      font-size: 4rem;
+      font-weight: 900;
+      background: var(--grad-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+    }
+
+    .start-section {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    @media (max-width: 600px) {
+      .info-grid { grid-template-columns: 1fr; }
+      .topic-meta { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/dashboard.html" class="nav-item"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item active"><span class="icon">▶️</span> Start GD</a>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item"><span class="icon">📋</span> GD History</a>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+      <a href="#" class="nav-item" onclick="API.Auth.logout()"><span class="icon">🚪</span> Logout</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="sidebar-name">Loading...</div>
+          <div class="email" id="sidebar-email">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px">
+      <div>
+        <button onclick="goBackToTopic()" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px; margin-bottom:10px; cursor:pointer">
+          ← Back to Topic Selection
+        </button>
+        <div class="page-title">GD Instructions</div>
+        <div class="page-subtitle">Read carefully before starting the discussion</div>
+      </div>
+      <a href="/dashboard.html" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px">
+        🏠 Dashboard
+      </a>
+    </div>
+
+    <div class="page-content">
+      <div class="instructions-layout">
+
+        <!-- Topic Hero -->
+        <div class="topic-hero animate-fade-in">
+          <div class="topic-label">📌 Today's GD Topic</div>
+          <div class="topic-text" id="topic-display">"Loading topic..."</div>
+          <div class="topic-meta">
+            <div class="meta-item">⏱️ <span class="label">Prep Time</span>&nbsp;<span class="value">30 sec</span></div>
+            <div class="meta-item">⏱️ <span class="label">Discussion</span>&nbsp;<span class="value" id="duration-display">10 min</span></div>
+            <div class="meta-item">👥 <span class="label">Mode</span>&nbsp;<span class="value" id="mode-display">AI Mode</span></div>
+            <div class="meta-item">🗂️ <span class="label">Category</span>&nbsp;<span class="value" id="category-display">General</span></div>
+          </div>
+        </div>
+
+        <!-- Preparation Timer -->
+        <div class="prep-section animate-fade-in" style="animation-delay:0.1s">
+          <div style="font-size:0.8rem; color:var(--accent-secondary); font-weight:600; margin-bottom:8px; text-transform:uppercase;">Preparation Countdown</div>
+          <div class="prep-timer-big" id="prep-timer">30</div>
+          <div style="font-size:0.82rem; color:var(--text-muted); margin-top:8px">Take notes, gather your thoughts, plan your opening argument</div>
+        </div>
+
+        <!-- Info Grid -->
+        <div class="info-grid">
+
+          <!-- GD Rules -->
+          <div class="rules-card animate-fade-in" style="animation-delay:0.15s">
+            <div style="font-weight:700; font-size:1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px">
+              📋 GD Rules
+            </div>
+            <ul class="rules-list">
+              <li><div class="rule-num">1</div>Speak clearly and confidently. Avoid mumbling.</li>
+              <li><div class="rule-num">2</div>Listen actively when others are speaking.</li>
+              <li><div class="rule-num">3</div>Do not interrupt other participants.</li>
+              <li><div class="rule-num">4</div>Support your points with relevant examples.</li>
+              <li><div class="rule-num">5</div>Maintain a respectful and professional tone.</li>
+              <li><div class="rule-num">6</div>Stay on topic and be concise.</li>
+              <li><div class="rule-num">7</div>Avoid filler words like "um", "uh", "like".</li>
+              <li><div class="rule-num">8</div>Try to initiate and conclude the discussion.</li>
+            </ul>
+          </div>
+
+          <!-- AI Participants Preview -->
+          <div class="agents-preview animate-fade-in" style="animation-delay:0.2s" id="agents-preview">
+            <div style="font-weight:700; font-size:1rem; color:var(--text-primary); margin-bottom:4px; display:flex; align-items:center; justify-content:space-between">
+              <span style="display:flex; align-items:center; gap:8px">🤖 AI Participants</span>
+              <span id="agents-preview-count-pill" style="font-size:0.75rem; color:var(--accent-secondary); font-weight:700">4 Active</span>
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px" id="agents-preview-subtitle">
+              You'll be discussing with these AI participants
+            </div>
+
+            <div id="agents-preview-list">
+              <!-- Dynamically populated based on chosen participant count -->
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Participant Count Selection (AI Mode only) -->
+        <div class="glass-card-flat animate-fade-in" id="ai-participants-selection-card" style="padding:24px; margin-bottom:24px">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px">
+            <div style="font-weight:700; font-size:1rem; display:flex; align-items:center; gap:8px">
+              👥 Number of AI Participants
+            </div>
+            <div id="ai-participants-status-badge" style="font-size:0.76rem; font-weight:700; color:#34d399; background:rgba(16,185,129,0.12); padding:4px 12px; border-radius:12px; border:1px solid rgba(52,211,153,0.3)">
+              Standard Panel (4 AI)
+            </div>
+          </div>
+          <div style="font-size:0.82rem; color:var(--text-muted); margin-bottom:14px">
+            Choose or type how many autonomous AI participants you want in the discussion (2 to 6 participants):
+          </div>
+
+          <!-- Presets -->
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px" id="ai-count-options">
+            <button type="button" class="category-chip" data-count="2" onclick="setAiCount(2, this)">2 AI (Duo Debate)</button>
+            <button type="button" class="category-chip" data-count="3" onclick="setAiCount(3, this)">3 AI (Trio Discussion)</button>
+            <button type="button" class="category-chip active" data-count="4" onclick="setAiCount(4, this)">4 AI (Standard Panel)</button>
+            <button type="button" class="category-chip" data-count="5" onclick="setAiCount(5, this)">5 AI (Extended Panel)</button>
+            <button type="button" class="category-chip" data-count="6" onclick="setAiCount(6, this)">6 AI (Full Board GD)</button>
+            <button type="button" class="category-chip" data-count="7" onclick="setAiCount(7, this)">7 AI (Extended GD)</button>
+            <button type="button" class="category-chip" data-count="8" onclick="setAiCount(8, this)">8 AI (Large Panel)</button>
+            <button type="button" class="category-chip" data-count="9" onclick="setAiCount(9, this)">9 AI (Massive GD)</button>
+            <button type="button" class="category-chip" data-count="10" onclick="setAiCount(10, this)">10 AI (Maximum GD)</button>
+          </div>
+
+          <!-- Type the number of AI participation option -->
+          <div style="display:flex; align-items:center; gap:12px; padding:12px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(108,99,255,0.25); border-radius:12px; width:fit-content; flex-wrap:wrap">
+            <span style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); display:flex; align-items:center; gap:6px">
+              ⌨️ Type number of AI participants:
+            </span>
+            <div style="display:flex; align-items:center; gap:6px">
+              <button type="button" class="btn-step" onclick="stepAiCount(-1)" title="Decrease">−</button>
+              <input
+                type="number"
+                id="type-ai-count-input"
+                min="2"
+                max="10"
+                value="4"
+                class="ai-number-input"
+                oninput="onTypeAiCount(this.value)"
+                placeholder="2-10"
+                title="Enter number of AI participants (2 to 10)"
+              />
+              <button type="button" class="btn-step" onclick="stepAiCount(1)" title="Increase">+</button>
+            </div>
+            <span style="font-size:0.75rem; color:var(--text-muted)">(Enter between 2 and 10)</span>
+          </div>
+        </div>
+
+        <!-- Duration Selection -->
+        <div class="glass-card-flat" style="padding:24px; margin-bottom:24px; animate-fade-in">
+          <div style="font-weight:700; margin-bottom:16px">⏱️ Discussion Duration</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap" id="duration-options">
+            <button class="category-chip" onclick="setDuration(5, this)">5 minutes</button>
+            <button class="category-chip active" onclick="setDuration(10, this)">10 minutes</button>
+            <button class="category-chip" onclick="setDuration(15, this)">15 minutes</button>
+            <button class="category-chip" onclick="setDuration(20, this)">20 minutes</button>
+          </div>
+        </div>
+
+        <!-- Start Button -->
+        <div class="start-section" style="gap:16px; margin-top:12px">
+          <button class="btn btn-secondary btn-lg" onclick="goBackToTopic()" style="cursor:pointer">
+            ← Change Topic
+          </button>
+          <button class="btn btn-primary btn-lg" id="start-btn" onclick="startGD()" style="min-width:220px; font-weight:700; box-shadow:0 0 24px rgba(108,99,255,0.4)">
+            🚀 Start Discussion Now
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  AppUtils.requireAuth();
+  const user = AppUtils.getUser();
+  if (user) {
+    document.getElementById('sidebar-name').textContent = user.name;
+    document.getElementById('sidebar-email').textContent = user.email;
+    document.getElementById('sidebar-avatar').textContent = user.name.charAt(0).toUpperCase();
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get('session');
+  const mode = params.get('mode') || 'ai';
+  const topic = decodeURIComponent(params.get('topic') || 'Group Discussion Topic');
+  const category = decodeURIComponent(params.get('category') || 'General');
+
+  // AI Persona Database
+  const PERSONAS = {
+    priya: {
+      name: 'Priya',
+      role: 'Moderator',
+      badgeClass: 'badge-primary',
+      emoji: '👩‍🏫',
+      bg: 'rgba(156,39,176,0.15)',
+      desc: 'Facilitates discussion, guides the flow, challenges weak points'
+    },
+    arjun: {
+      name: 'Arjun',
+      role: 'Supporter',
+      badgeClass: 'badge-green',
+      emoji: '🧑‍💼',
+      bg: 'rgba(16,185,129,0.15)',
+      desc: 'Enthusiastic, optimistic, highlights practical benefits'
+    },
+    meera: {
+      name: 'Meera',
+      role: 'Opponent',
+      badgeClass: 'badge-red',
+      emoji: '👩‍💼',
+      bg: 'rgba(239,68,68,0.15)',
+      desc: 'Critical challenger, devil\'s advocate, counterarguments'
+    },
+    ravi: {
+      name: 'Ravi',
+      role: 'Analyst',
+      badgeClass: 'badge-blue',
+      emoji: '👨‍🔬',
+      bg: 'rgba(59,130,246,0.15)',
+      desc: 'Balanced, data-driven, asks probing questions'
+    },
+    vikram: {
+      name: 'Vikram',
+      role: 'Realist',
+      badgeClass: 'badge-yellow',
+      emoji: '👨‍💼',
+      bg: 'rgba(245,158,11,0.15)',
+      desc: 'Pragmatist, focuses on ground reality, regulations & execution'
+    },
+    ananya: {
+      name: 'Ananya',
+      role: 'Synthesizer',
+      badgeClass: 'badge-purple',
+      emoji: '👩‍💻',
+      bg: 'rgba(236,72,153,0.15)',
+      desc: 'Collaborative, bridges viewpoints, proposes constructive solutions'
+    },
+    neha: {
+      name: 'Neha',
+      role: 'Questioner',
+      badgeClass: 'badge-teal',
+      emoji: '🙋‍♀️',
+      bg: 'rgba(20,184,166,0.15)',
+      desc: 'Inquisitive, asks clarifying questions, challenges assumptions'
+    },
+    karthik: {
+      name: 'Karthik',
+      role: "Devil's Advocate",
+      badgeClass: 'badge-indigo',
+      emoji: '🕵️‍♂️',
+      bg: 'rgba(99,102,241,0.15)',
+      desc: 'Tests arguments by exploring alternative perspectives'
+    },
+    sneha: {
+      name: 'Sneha',
+      role: 'Peacemaker',
+      badgeClass: 'badge-red',
+      emoji: '🕊️',
+      bg: 'rgba(244,63,94,0.15)',
+      desc: 'Calm, empathetic, seeks middle ground and harmony'
+    },
+    rahul: {
+      name: 'Rahul',
+      role: 'Innovator',
+      badgeClass: 'badge-yellow',
+      emoji: '💡',
+      bg: 'rgba(234,179,8,0.15)',
+      desc: 'Creative, proposes fresh ideas and outside-the-box solutions'
+    }
+  };
+
+  const PARTICIPANT_TIERS = {
+    2: {
+      name: 'Duo Debate (2 AI)',
+      agents: ['arjun', 'meera'],
+      badge: 'Duo Debate (2 AI)'
+    },
+    3: {
+      name: 'Trio Discussion (3 AI)',
+      agents: ['priya', 'arjun', 'meera'],
+      badge: 'Trio Discussion (3 AI)'
+    },
+    4: {
+      name: 'Standard Panel (4 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi'],
+      badge: 'Standard Panel (4 AI)'
+    },
+    5: {
+      name: 'Extended Panel (5 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram'],
+      badge: 'Extended Panel (5 AI)'
+    },
+    6: {
+      name: 'Full Board GD (6 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram', 'ananya'],
+      badge: 'Full Board GD (6 AI)'
+    },
+    7: {
+      name: 'Extended GD (7 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram', 'ananya', 'neha'],
+      badge: 'Extended GD (7 AI)'
+    },
+    8: {
+      name: 'Large Panel (8 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram', 'ananya', 'neha', 'karthik'],
+      badge: 'Large Panel (8 AI)'
+    },
+    9: {
+      name: 'Massive GD (9 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram', 'ananya', 'neha', 'karthik', 'sneha'],
+      badge: 'Massive GD (9 AI)'
+    },
+    10: {
+      name: 'Maximum GD (10 AI)',
+      agents: ['priya', 'arjun', 'meera', 'ravi', 'vikram', 'ananya', 'neha', 'karthik', 'sneha', 'rahul'],
+      badge: 'Maximum GD (10 AI)'
+    }
+  };
+
+  let selectedAiCount = parseInt(params.get('aiCount') || localStorage.getItem('gd_ai_participants') || '4', 10);
+  if (isNaN(selectedAiCount) || selectedAiCount < 2 || selectedAiCount > 10) selectedAiCount = 4;
+
+  document.getElementById('topic-display').textContent = `"${topic}"`;
+  document.getElementById('mode-display').textContent = mode === 'ai' ? `🤖 AI Mode • ${selectedAiCount} AI` : '👥 Human Mode';
+  document.getElementById('category-display').textContent = category;
+
+  function renderAiPersonas(count) {
+    const listEl = document.getElementById('agents-preview-list');
+    if (!listEl) return;
+    const tier = PARTICIPANT_TIERS[count] || PARTICIPANT_TIERS[4];
+    listEl.innerHTML = tier.agents.map(id => {
+      const p = PERSONAS[id];
+      return `
+        <div class="agent-row" style="animation:fadeIn 0.25s ease">
+          <div class="agent-emoji" style="background:${p.bg}">${p.emoji}</div>
+          <div class="agent-details">
+            <div class="name">${p.name} <span class="badge ${p.badgeClass}" style="font-size:0.65rem">${p.role}</span></div>
+            <div class="desc">${p.desc}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const pill = document.getElementById('agents-preview-count-pill');
+    if (pill) pill.textContent = `${count} Active`;
+
+    const statusBadge = document.getElementById('ai-participants-status-badge');
+    if (statusBadge) statusBadge.textContent = tier.badge;
+
+    // Keep typed number input in sync
+    const typedInput = document.getElementById('type-ai-count-input');
+    if (typedInput && parseInt(typedInput.value, 10) !== count) {
+      typedInput.value = count;
+    }
+
+    if (mode === 'ai') {
+      document.getElementById('mode-display').textContent = `🤖 AI Mode • ${count} AI`;
+    }
+  }
+
+  function setAiCount(count, el) {
+    selectedAiCount = count;
+    localStorage.setItem('gd_ai_participants', count);
+
+    document.querySelectorAll('#ai-count-options .category-chip').forEach(c => {
+      c.classList.toggle('active', parseInt(c.dataset.count, 10) === count);
+    });
+
+    renderAiPersonas(count);
+  }
+
+  function onTypeAiCount(val) {
+    const parsed = parseInt(val, 10);
+    if (isNaN(parsed)) return;
+    const clamped = Math.max(2, Math.min(10, parsed));
+    setAiCount(clamped);
+  }
+
+  function stepAiCount(delta) {
+    const next = Math.max(2, Math.min(10, selectedAiCount + delta));
+    setAiCount(next);
+  }
+
+  // Show/hide agents preview & participant selector for human mode vs AI mode
+  if (mode === 'human') {
+    const aiCard = document.getElementById('ai-participants-selection-card');
+    if (aiCard) aiCard.style.display = 'none';
+
+    document.getElementById('agents-preview').innerHTML = `
+      <div style="font-weight:700; font-size:1rem; color:var(--text-primary); margin-bottom:4px">👥 Human Participants</div>
+      <div style="font-size:0.82rem; color:var(--text-muted); line-height:1.6">
+        In Human Mode, you'll discuss with real participants.<br><br>
+        • <strong>Create Room</strong>: Get a unique Room ID to share<br>
+        • <strong>Join Room</strong>: Enter a Room ID from your organizer<br>
+        • Up to 8 participants per room
+      </div>
+    `;
+  } else {
+    // Initial render for AI mode
+    setAiCount(selectedAiCount, document.querySelector(`#ai-count-options [data-count="${selectedAiCount}"]`));
+  }
+
+  let selectedDuration = 600; // seconds
+
+  function setDuration(minutes, el) {
+    selectedDuration = minutes * 60;
+    document.querySelectorAll('#duration-options .category-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('duration-display').textContent = `${minutes} min`;
+  }
+
+  // Prep timer countdown
+  let prepSeconds = 30;
+  const prepInterval = setInterval(() => {
+    prepSeconds--;
+    const el = document.getElementById('prep-timer');
+    if (el) el.textContent = prepSeconds;
+    if (prepSeconds <= 0) clearInterval(prepInterval);
+  }, 1000);
+
+  async function startGD() {
+    const btn = document.getElementById('start-btn');
+    btn.innerHTML = '<span class="spinner"></span> Starting...';
+    btn.disabled = true;
+    clearInterval(prepInterval);
+
+    if (mode === 'ai') {
+      window.location.href = `/ai-room.html?session=${sessionId}&topic=${encodeURIComponent(topic)}&duration=${selectedDuration}&aiCount=${selectedAiCount}`;
+    } else {
+      try {
+        const res = await API.Rooms.create(topic, category || 'General', 120, selectedDuration || 300, 6);
+        if (res && res.room) {
+          window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}`;
+          return;
+        }
+      } catch (err) {
+        console.warn('Could not create room via API, falling back:', err);
+      }
+      window.location.href = `/human-room.html?action=create&topic=${encodeURIComponent(topic)}&duration=${selectedDuration}`;
+    }
+  }
+
+  function goBackToTopic() {
+    window.location.href = `/select-topic.html?mode=${mode}&aiCount=${selectedAiCount}`;
+  }
+</script>
+<style>
+  .category-chip { padding:8px 16px; border-radius:var(--radius-full); border:1px solid var(--glass-border); background:rgba(255,255,255,0.04); color:var(--text-secondary); font-size:0.82rem; font-weight:600; cursor:pointer; transition:all var(--transition-fast); }
+  .category-chip.active { background:rgba(108,99,255,0.15); border-color:rgba(108,99,255,0.4); color:var(--accent-secondary); }
+
+  .btn-step {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(108,99,255,0.35);
+    background: rgba(108,99,255,0.15);
+    color: var(--accent-secondary);
+    font-size: 1.1rem;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    line-height: 1;
+    user-select: none;
+  }
+  .btn-step:hover {
+    background: rgba(108,99,255,0.35);
+    color: #fff;
+    transform: translateY(-1px);
+  }
+  .ai-number-input {
+    width: 52px;
+    height: 30px;
+    text-align: center;
+    font-size: 1rem;
+    font-weight: 800;
+    color: #fff;
+    background: rgba(255,255,255,0.06);
+    border: 1.5px solid rgba(108,99,255,0.4);
+    border-radius: 8px;
+    outline: none;
+    transition: all var(--transition-fast);
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .ai-number-input::-webkit-outer-spin-button,
+  .ai-number-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .ai-number-input:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 12px rgba(108,99,255,0.4);
+    background: rgba(108,99,255,0.12);
+  }
+</style>
+</body>
+</html>

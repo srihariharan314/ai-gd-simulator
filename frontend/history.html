@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GD History — GD Simulator</title>
+  <meta name="description" content="View past Group Discussion practice sessions, evaluation reports, and transcripts." />
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    .filter-bar {
+      background: var(--bg-card);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-xl);
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 7px 16px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: 1px solid var(--glass-border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .filter-btn.active, .filter-btn:hover {
+      background: var(--accent-primary);
+      border-color: var(--accent-primary);
+      color: white;
+    }
+    .search-input {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      padding: 8px 14px;
+      color: var(--text-primary);
+      font-size: 0.85rem;
+      min-width: 220px;
+    }
+    .search-input:focus {
+      border-color: var(--accent-primary);
+      outline: none;
+    }
+    .session-cards-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .history-card {
+      background: var(--bg-card);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      transition: all var(--transition-fast);
+    }
+    .history-card:hover {
+      border-color: rgba(108,99,255,0.4);
+      background: rgba(255,255,255,0.04);
+      transform: translateY(-2px);
+    }
+    .history-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex: 1;
+      min-width: 0;
+    }
+    .mode-badge {
+      width: 46px;
+      height: 46px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    .mode-badge.ai {
+      background: rgba(108,99,255,0.15);
+      border: 1px solid rgba(108,99,255,0.3);
+    }
+    .mode-badge.human {
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.3);
+    }
+    .history-details {
+      flex: 1;
+      min-width: 0;
+    }
+    .history-topic {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .history-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+    .history-tag {
+      background: rgba(255,255,255,0.06);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+    }
+    .history-score-box {
+      text-align: right;
+      flex-shrink: 0;
+      min-width: 80px;
+    }
+    .history-score-val {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 800;
+    }
+    .history-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .empty-history {
+      text-align: center;
+      padding: 60px 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-xl);
+    }
+    .empty-history-icon {
+      font-size: 3rem;
+      margin-bottom: 14px;
+    }
+    @media (max-width: 768px) {
+      .history-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .history-score-box {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Main</div>
+      <a href="/dashboard.html" class="nav-item"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item"><span class="icon">▶️</span> Start GD</a>
+      <div class="nav-section-label">Analytics</div>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item active"><span class="icon">📋</span> GD History</a>
+      <div class="nav-section-label">Account</div>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-avatar" id="nav-user-avatar">U</div>
+      <div class="user-info">
+        <div class="user-name" id="nav-user-name">User</div>
+        <div class="user-email" id="nav-user-email">user@gd.com</div>
+      </div>
+      <button class="btn btn-icon" onclick="API.Auth.logout()" title="Logout">🚪</button>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+    <div class="header-nav">
+      <div>
+        <h1 style="font-size: 1.6rem; font-weight: 800;">📋 GD Practice History</h1>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-top: 4px;">Review your past Group Discussions, score reports, and transcripts</p>
+      </div>
+      <a href="/select-mode.html" class="btn btn-primary"><span class="btn-icon">⚡</span> New GD</a>
+    </div>
+
+    <!-- FILTER & SEARCH BAR -->
+    <div class="filter-bar">
+      <div class="filter-group">
+        <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">All Modes</button>
+        <button class="filter-btn" data-filter="ai" onclick="setFilter('ai', this)">🤖 AI GD</button>
+        <button class="filter-btn" data-filter="human" onclick="setFilter('human', this)">👥 Human GD</button>
+      </div>
+      <div class="filter-group">
+        <input type="text" id="search-box" class="search-input" placeholder="🔍 Search topic or category..." oninput="handleSearch(this.value)" />
+        <select id="sort-select" class="search-input" style="min-width: 140px;" onchange="handleSort(this.value)">
+          <option value="newest">Newest First</option>
+          <option value="oldest">Oldest First</option>
+          <option value="highest">Highest Score</option>
+          <option value="lowest">Lowest Score</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- SESSIONS LIST -->
+    <div id="sessions-container" class="session-cards-grid">
+      <div class="spinner-container"><div class="spinner"></div></div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  if (!API.Auth.isLoggedIn()) window.location.href = '/index.html';
+
+  let allSessions = [];
+  let currentFilter = 'all';
+  let currentSearch = '';
+  let currentSort = 'newest';
+
+  async function loadHistory() {
+    const user = API.Auth.getUser();
+    if (user) {
+      document.getElementById('nav-user-name').textContent = user.name;
+      document.getElementById('nav-user-email').textContent = user.email;
+      document.getElementById('nav-user-avatar').textContent = user.name[0].toUpperCase();
+    }
+
+    try {
+      const res = await API.Sessions.getHistory(100);
+      allSessions = res.sessions || [];
+      renderSessions();
+    } catch (err) {
+      console.error('Failed to load history:', err);
+      document.getElementById('sessions-container').innerHTML = `
+        <div class="empty-history">
+          <div class="empty-history-icon">⚠️</div>
+          <h3 style="margin-bottom: 8px;">Failed to load history</h3>
+          <p style="color: var(--text-muted);">${err.message}</p>
+        </div>
+      `;
+    }
+  }
+
+  function setFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderSessions();
+  }
+
+  function handleSearch(val) {
+    currentSearch = val.toLowerCase().trim();
+    renderSessions();
+  }
+
+  function handleSort(val) {
+    currentSort = val;
+    renderSessions();
+  }
+
+  function renderSessions() {
+    const container = document.getElementById('sessions-container');
+    let filtered = allSessions.filter(s => {
+      const matchesFilter = (currentFilter === 'all' || s.mode === currentFilter);
+      const matchesSearch = !currentSearch ||
+        (s.topic && s.topic.toLowerCase().includes(currentSearch)) ||
+        (s.category && s.category.toLowerCase().includes(currentSearch));
+      return matchesFilter && matchesSearch;
+    });
+
+    // Sorting
+    filtered.sort((a, b) => {
+      if (currentSort === 'newest') return new Date(b.created_at) - new Date(a.created_at);
+      if (currentSort === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
+      if (currentSort === 'highest') return (b.overall_score || 0) - (a.overall_score || 0);
+      if (currentSort === 'lowest') return (a.overall_score || 0) - (b.overall_score || 0);
+      return 0;
+    });
+
+    if (filtered.length === 0) {
+      container.innerHTML = `
+        <div class="empty-history">
+          <div class="empty-history-icon">💬</div>
+          <h3 style="margin-bottom: 6px;">No discussions found</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 20px;">
+            ${currentSearch || currentFilter !== 'all' ? 'Try adjusting your filters or search query.' : 'You haven\'t completed any GD sessions yet.'}
+          </p>
+          <a href="/select-mode.html" class="btn btn-primary">Start Your First GD</a>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = filtered.map(s => {
+      const isAI = s.mode === 'ai';
+      const score = s.overall_score ? Math.round(s.overall_score) : null;
+      const { grade, cls } = score !== null ? AppUtils.getScoreGrade(score) : { grade: 'Pending', cls: 'badge-warning' };
+      const scoreColor = score !== null ? AppUtils.getScoreColor(score) : '#94a3b8';
+
+      return `
+        <div class="history-card">
+          <div class="history-left">
+            <div class="mode-badge ${isAI ? 'ai' : 'human'}">
+              ${isAI ? '🤖' : '👥'}
+            </div>
+            <div class="history-details">
+              <div class="history-topic">${s.topic || 'Untitled Discussion'}</div>
+              <div class="history-meta">
+                <span class="history-tag">${isAI ? 'AI Discussion' : 'Peer Discussion'}</span>
+                ${s.category ? `<span class="history-tag">${s.category}</span>` : ''}
+                <span>📅 ${AppUtils.formatDate(s.created_at)}</span>
+                ${s.speaking_turns ? `<span>🗣️ ${s.speaking_turns} turns</span>` : ''}
+                ${s.duration ? `<span>⏱️ ${Math.round(s.duration / 60)} min</span>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div class="history-score-box">
+            ${score !== null ? `
+              <div class="history-score-val" style="color: ${scoreColor};">${score}%</div>
+              <span class="badge ${cls}" style="font-size: 0.72rem; padding: 2px 8px;">Grade: ${grade}</span>
+            ` : `
+              <span class="badge badge-warning">Pending</span>
+            `}
+          </div>
+
+          <div class="history-actions">
+            ${score !== null ? `
+              <a href="/results.html?session_id=${s.session_id}" class="btn btn-secondary btn-sm">📊 View Report</a>
+            ` : `
+              <a href="/select-mode.html" class="btn btn-outline btn-sm">Start New GD</a>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  document.addEventListener('DOMContentLoaded', loadHistory);
+</script>
+</body>
+</html>

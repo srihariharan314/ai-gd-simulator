@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI GD Room — GD Simulator</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <link rel="stylesheet" href="/css/ai-room.css" />
+</head>
+<body id="ai-room-page">
+
+<!-- PREPARATION OVERLAY -->
+<div id="prep-overlay" class="prep-overlay" style="display:none">
+  <div class="prep-card animate-scale-in">
+    <div style="font-size:0.8rem; color:var(--accent-secondary); font-weight:700; text-transform:uppercase; letter-spacing:0.15em; margin-bottom:12px">
+      Preparation Time
+    </div>
+    <div class="prep-countdown" id="prep-countdown">30</div>
+    <p style="margin:16px 0 8px; font-size:0.9rem" id="prep-topic"></p>
+    <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:24px">
+      Gather your thoughts. Plan your key points. Take a deep breath.
+    </p>
+    <button class="btn btn-secondary btn-sm" id="skip-prep-btn">Skip Prep →</button>
+  </div>
+</div>
+
+<!-- ROOM LAYOUT -->
+<div class="room-layout">
+
+  <!-- HEADER -->
+  <header class="room-header">
+    <div style="display:flex; align-items:center; gap:12px">
+      <a href="/dashboard.html" class="btn-icon" title="Exit">🏠</a>
+      <div>
+        <div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase; font-weight:600">GD Simulator</div>
+        <div style="font-size:0.82rem; font-weight:600; color:var(--accent-secondary)" id="room-mode-badge">🤖 AI Mode</div>
+      </div>
+    </div>
+
+    <div class="room-topic">
+      <div class="room-topic-label">Today's Topic</div>
+      <div class="room-topic-text" id="room-topic-text">Loading...</div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:16px">
+      <div class="room-timer">
+        <div class="timer-display" id="timer-display">10:00</div>
+        <div class="timer-label">Remaining</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="confirmEnd()">End GD</button>
+    </div>
+  </header>
+
+  <!-- LEFT: PARTICIPANTS PANEL -->
+  <aside class="participants-panel">
+    <div class="panel-title">👥 Participants</div>
+
+    <!-- User Card -->
+    <div class="participant-card user-card-room" id="agent-user">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
+        <div class="participant-avatar-large" style="background:rgba(16,185,129,0.15); color:#34d399">
+          🧑‍🎓
+        </div>
+        <div>
+          <div class="participant-name" id="user-name-label">You</div>
+          <div class="participant-role">Student</div>
+        </div>
+      </div>
+      <div class="speaking-indicator hidden" id="user-speaking-indicator">
+        <div class="speaking-bar"></div>
+        <div class="speaking-bar"></div>
+        <div class="speaking-bar"></div>
+        <div class="speaking-bar"></div>
+        <div class="speaking-bar"></div>
+      </div>
+    </div>
+
+    <!-- AI Participants (Dynamically rendered based on selected AI count) -->
+    <div id="ai-participants-container" style="display:flex; flex-direction:column; gap:12px"></div>
+  </aside>
+
+  <!-- CENTER: CHAT AREA -->
+  <div class="chat-area">
+    <div class="chat-messages" id="chat-messages">
+      <!-- Messages appear here -->
+      <div style="text-align:center; color:var(--text-muted); padding:40px 20px; font-size:0.9rem">
+        <div style="font-size:2rem; margin-bottom:12px">🎤</div>
+        <div>The discussion is about to begin...</div>
+        <div style="font-size:0.8rem; margin-top:6px">Speak your mind. Listen actively. Engage confidently.</div>
+      </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area" id="input-area">
+      <div id="turn-indicator" class="turn-indicator">
+        <div class="turn-text" id="turn-text">Waiting for discussion to start...</div>
+      </div>
+      <div class="input-row">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          placeholder="Type your response here, or use the microphone..."
+          rows="2"
+          onkeydown="handleInputKeydown(event)"
+        ></textarea>
+        <button class="voice-btn" id="voice-btn" onclick="AIRoom.startListening()" title="Click to speak">
+          🎤
+        </button>
+        <button class="btn btn-primary" onclick="handleSendText()" title="Send">
+          ➤
+        </button>
+      </div>
+      <div style="display:flex; align-items:center; justify-content:space-between">
+        <div style="font-size:0.72rem; color:var(--text-muted)" id="input-status"></div>
+        <div style="font-size:0.72rem; color:var(--text-muted)">
+          💡 Chrome/Edge recommended for voice input
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: INSIGHTS PANEL -->
+  <aside class="insights-panel">
+    <div class="panel-title">📊 Live Stats</div>
+
+    <div class="live-stat">
+      <div class="live-stat-label">Speaking Turns</div>
+      <div class="live-stat-value" id="stat-turns">0</div>
+    </div>
+
+    <div class="live-stat">
+      <div class="live-stat-label">Words Spoken</div>
+      <div class="live-stat-value" id="stat-words">0</div>
+    </div>
+
+    <div class="live-stat">
+      <div class="live-stat-label">Filler Words</div>
+      <div class="live-stat-value" id="stat-fillers" style="color:var(--accent-yellow)">0</div>
+    </div>
+
+    <div style="margin-top:8px">
+      <div class="panel-title">💡 Tips</div>
+      <div style="font-size:0.78rem; color:var(--text-muted); line-height:1.7; padding:12px; background:rgba(255,255,255,0.03); border-radius:var(--radius-md); border:1px solid var(--glass-border)">
+        <div>• Speak when it's your turn</div>
+        <div>• Use examples to support points</div>
+        <div>• Reference what others said</div>
+        <div>• Keep sentences short & clear</div>
+        <div>• Stay calm and confident</div>
+      </div>
+    </div>
+
+    <div style="margin-top:8px">
+      <div class="panel-title">🎯 Quick Phrases</div>
+      <div style="display:flex; flex-direction:column; gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="usePhrase('I would like to add that...')">I would like to add...</button>
+        <button class="btn btn-secondary btn-sm" onclick="usePhrase('I respectfully disagree because...')">I disagree because...</button>
+        <button class="btn btn-secondary btn-sm" onclick="usePhrase('Building on your point...')">Building on your point...</button>
+        <button class="btn btn-secondary btn-sm" onclick="usePhrase('To summarize the discussion...')">To summarize...</button>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/speech.js"></script>
+<script src="/js/ai-room.js"></script>
+<script>
+  function handleInputKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendText();
+    }
+  }
+
+  function handleSendText() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (text) {
+      AIRoom.submitUserMessage(text);
+      input.value = '';
+    }
+  }
+
+  function usePhrase(phrase) {
+    const input = document.getElementById('chat-input');
+    input.value = phrase;
+    input.focus();
+  }
+
+  function confirmEnd() {
+    if (confirm('End the discussion and view your results?')) {
+      AIRoom.endDiscussion('manual');
+    }
+  }
+
+  // Soundwave animation
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes soundWave {
+      from { height: 3px; }
+      to { height: 16px; }
+    }
+    .input-area.active-turn {
+      border-top-color: rgba(16,185,129,0.4);
+      background: rgba(16,185,129,0.04);
+    }
+  `;
+  document.head.appendChild(style);
+</script>
+</body>
+</html>

@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Select GD Mode — GD Simulator</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .mode-card {
+      border-radius: var(--radius-xl);
+      padding: 48px 36px;
+      border: 2px solid var(--glass-border);
+      cursor: pointer;
+      transition: all var(--transition-slow);
+      position: relative;
+      overflow: hidden;
+      text-align: center;
+    }
+
+    .mode-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity var(--transition-slow);
+    }
+
+    .mode-card:hover {
+      transform: translateY(-8px);
+      box-shadow: var(--shadow-glow);
+    }
+
+    .mode-card.ai-card {
+      background: linear-gradient(145deg, rgba(108,99,255,0.08) 0%, rgba(236,72,153,0.05) 100%);
+      border-color: rgba(108,99,255,0.25);
+    }
+    .mode-card.ai-card:hover {
+      border-color: rgba(108,99,255,0.6);
+      background: linear-gradient(145deg, rgba(108,99,255,0.15) 0%, rgba(236,72,153,0.08) 100%);
+    }
+
+    .mode-card.human-card {
+      background: linear-gradient(145deg, rgba(16,185,129,0.08) 0%, rgba(59,130,246,0.05) 100%);
+      border-color: rgba(16,185,129,0.25);
+    }
+    .mode-card.human-card:hover {
+      border-color: rgba(16,185,129,0.6);
+      background: linear-gradient(145deg, rgba(16,185,129,0.15) 0%, rgba(59,130,246,0.08) 100%);
+    }
+
+    .mode-icon {
+      font-size: 4rem;
+      margin-bottom: 20px;
+      display: block;
+      animation: float 3s ease infinite;
+    }
+
+    .mode-title {
+      font-family: var(--font-display);
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .ai-card .mode-title { background: var(--grad-primary); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .human-card .mode-title { background: var(--grad-green); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+    .mode-desc {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+
+    .mode-features {
+      list-style: none;
+      text-align: left;
+      margin-bottom: 28px;
+    }
+
+    .mode-features li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .mode-features li:last-child { border-bottom: none; }
+    .mode-features .check { font-size: 1rem; }
+
+    .ai-agents-preview {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .agent-mini {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem;
+      border: 2px solid rgba(255,255,255,0.1);
+    }
+
+    @media (max-width: 700px) {
+      .mode-grid { grid-template-columns: 1fr; }
+      .mode-card { padding: 32px 24px; }
+    }
+
+    /* ── Join Code modal ── */
+    .join-code-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.88);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(10px);
+    }
+    .join-code-box {
+      padding: 40px 36px 32px;
+      max-width: 450px;
+      width: 92%;
+      border-radius: 20px;
+      position: relative;
+      text-align: center;
+      background: linear-gradient(160deg, rgba(16,24,40,0.98) 0%, rgba(10,14,28,0.98) 100%);
+      border: 1.5px solid rgba(16,185,129,0.25);
+      box-shadow: 0 0 60px rgba(16,185,129,0.1), 0 20px 60px rgba(0,0,0,0.6);
+      animation: jcSlideUp 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    @keyframes jcSlideUp {
+      from { opacity:0; transform: translateY(24px) scale(0.96); }
+      to   { opacity:1; transform: translateY(0) scale(1); }
+    }
+    .join-code-close {
+      position: absolute;
+      top: 14px; right: 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text-muted);
+      font-size: 1rem;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .join-code-close:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+
+    /* Animated code input */
+    .room-code-input-big {
+      width: 100%;
+      box-sizing: border-box;
+      text-align: center;
+      font-size: 1.8rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      font-weight: 800;
+      font-family: var(--font-display);
+      background: rgba(16,185,129,0.06);
+      border: 2px solid rgba(16,185,129,0.3);
+      border-radius: 12px;
+      padding: 16px 14px;
+      color: #34d399;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      caret-color: #34d399;
+    }
+    .room-code-input-big::placeholder { color: rgba(52,211,153,0.3); letter-spacing: 0.15em; font-size: 1.4rem; font-weight: 600; }
+    .room-code-input-big:focus {
+      border-color: rgba(52,211,153,0.7);
+      box-shadow: 0 0 0 3px rgba(52,211,153,0.15), 0 0 20px rgba(52,211,153,0.1);
+    }
+    .room-code-input-big.error {
+      border-color: rgba(239,68,68,0.7);
+      color: #f87171;
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.12);
+      animation: shake 0.35s ease;
+    }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      25%     { transform: translateX(-6px); }
+      75%     { transform: translateX(6px); }
+    }
+    .join-hint {
+      font-size: 0.78rem;
+      margin-top: 8px;
+      min-height: 18px;
+      transition: color 0.15s;
+    }
+    .join-hint.ok  { color: #34d399; }
+    .join-hint.err { color: #f87171; }
+    .join-hint.dim { color: var(--text-muted); }
+
+    /* Two action buttons in Human Mode card */
+    .human-action-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .btn-host {
+      background: linear-gradient(135deg, rgba(16,185,129,0.22), rgba(52,211,153,0.15));
+      border: 1.5px solid rgba(52,211,153,0.45);
+      color: #34d399;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 14px 20px;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn-host:hover {
+      background: rgba(52,211,153,0.28);
+      box-shadow: 0 0 20px rgba(52,211,153,0.2);
+      transform: translateY(-1px);
+    }
+    .btn-join-code {
+      background: rgba(255,255,255,0.05);
+      border: 1.5px solid rgba(255,255,255,0.14);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.93rem;
+      padding: 12px 20px;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn-join-code:hover {
+      background: rgba(16,185,129,0.1);
+      border-color: rgba(16,185,129,0.35);
+      color: #34d399;
+    }
+
+    /* AI Participant Count Selector */
+    .ai-count-container {
+      margin-bottom: 20px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(108,99,255,0.2);
+      border-radius: var(--radius-lg);
+    }
+    .ai-count-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-secondary);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .ai-count-selector {
+      display: flex;
+      justify-content: center;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(108,99,255,0.3);
+      border-radius: var(--radius-full);
+      padding: 3px;
+      gap: 4px;
+    }
+    .ai-count-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 7px 10px;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+    }
+    .ai-count-btn:hover {
+      color: #fff;
+      background: rgba(108,99,255,0.15);
+    }
+    .ai-count-btn.active {
+      background: var(--grad-primary);
+      color: #fff;
+      box-shadow: 0 0 14px rgba(108,99,255,0.45);
+    }
+
+    .btn-step {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid rgba(108,99,255,0.35);
+      background: rgba(108,99,255,0.12);
+      color: var(--accent-secondary);
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      line-height: 1;
+      user-select: none;
+    }
+    .btn-step:hover {
+      background: rgba(108,99,255,0.3);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+    .ai-number-input {
+      width: 52px;
+      height: 28px;
+      text-align: center;
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: #fff;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(108,99,255,0.4);
+      border-radius: 8px;
+      outline: none;
+      transition: all var(--transition-fast);
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+    .ai-number-input::-webkit-outer-spin-button,
+    .ai-number-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .ai-number-input:focus {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 12px rgba(108,99,255,0.35);
+      background: rgba(108,99,255,0.1);
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Main</div>
+      <a href="/dashboard.html" class="nav-item"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item active"><span class="icon">▶️</span> Start GD</a>
+      <div class="nav-section-label">Analytics</div>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item"><span class="icon">📋</span> GD History</a>
+      <div class="nav-section-label">Account</div>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+      <a href="#" class="nav-item" onclick="API.Auth.logout()"><span class="icon">🚪</span> Logout</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-card" onclick="window.location.href='/profile.html'" id="sidebar-user">
+        <div class="user-avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="sidebar-name">Loading...</div>
+          <div class="email" id="sidebar-email">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px">
+      <div>
+        <a href="/dashboard.html" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px; margin-bottom:10px">
+          ← Back to Dashboard
+        </a>
+        <div class="page-title">Select GD Mode</div>
+        <div class="page-subtitle">Choose how you want to practice today</div>
+      </div>
+    </div>
+
+    <div class="page-content">
+      <!-- 4-Step Practice Workflow Indicator -->
+      <div class="workflow-stepper">
+        <div class="step-item active"><div class="step-number">1</div> Select Mode</div>
+        <div class="step-divider"></div>
+        <div class="step-item"><div class="step-number">2</div> Choose Topic</div>
+        <div class="step-divider"></div>
+        <div class="step-item"><div class="step-number">3</div> GD Room</div>
+        <div class="step-divider"></div>
+        <div class="step-item"><div class="step-number">4</div> Analysis</div>
+      </div>
+      <div class="mode-grid">
+
+        <!-- AI MODE -->
+        <div class="mode-card ai-card animate-fade-in" onclick="selectMode('ai')">
+          <span class="mode-icon">🤖</span>
+
+          <div class="ai-agents-preview" id="ai-agents-preview">
+            <div class="agent-mini" style="background:rgba(156,39,176,0.15); color:#c084fc" title="Priya - Moderator">👩‍🏫</div>
+            <div class="agent-mini" style="background:rgba(16,185,129,0.15); color:#34d399" title="Arjun - Supporter">🧑‍💼</div>
+            <div class="agent-mini" style="background:rgba(239,68,68,0.15); color:#f87171" title="Meera - Opponent">👩‍💼</div>
+            <div class="agent-mini" style="background:rgba(59,130,246,0.15); color:#60a5fa" title="Ravi - Analyst">👨‍🔬</div>
+          </div>
+
+          <div class="mode-title">AI Mode</div>
+
+          <!-- AI Participants Count Selector -->
+          <div class="ai-count-container" onclick="event.stopPropagation()">
+            <div class="ai-count-label">
+              <span>👥</span> AI Participants: <span id="ai-count-display-badge" style="color:#fff; font-weight:800">4 AI</span>
+            </div>
+            <div class="ai-count-selector" id="ai-count-selector">
+              <button type="button" class="ai-count-btn" data-count="2" onclick="setAiParticipantCount(2, event)" title="2 AI: Supporter & Opponent (Intense debate)">2 AI</button>
+              <button type="button" class="ai-count-btn" data-count="3" onclick="setAiParticipantCount(3, event)" title="3 AI: Moderator, Supporter, Opponent">3 AI</button>
+              <button type="button" class="ai-count-btn active" data-count="4" onclick="setAiParticipantCount(4, event)" title="4 AI: Moderator, Supporter, Opponent, Analyst (Standard)">4 AI</button>
+              <button type="button" class="ai-count-btn" data-count="5" onclick="setAiParticipantCount(5, event)" title="5 AI: + Vikram (Realist)">5 AI</button>
+              <button type="button" class="ai-count-btn" data-count="6" onclick="setAiParticipantCount(6, event)" title="6 AI: + Ananya (Synthesizer)">6 AI</button>
+              <button type="button" class="ai-count-btn" data-count="7" onclick="setAiParticipantCount(7, event)" title="7 AI: + Neha (Questioner)">7 AI</button>
+              <button type="button" class="ai-count-btn" data-count="8" onclick="setAiParticipantCount(8, event)" title="8 AI: + Karthik (Devil's Advocate)">8 AI</button>
+              <button type="button" class="ai-count-btn" data-count="9" onclick="setAiParticipantCount(9, event)" title="9 AI: + Sneha (Peacemaker)">9 AI</button>
+              <button type="button" class="ai-count-btn" data-count="10" onclick="setAiParticipantCount(10, event)" title="10 AI: + Rahul (Innovator)">10 AI</button>
+            </div>
+
+            <!-- Type the number of AI participation option -->
+            <div class="type-ai-count-wrapper" style="margin-top:10px; display:flex; align-items:center; justify-content:center; gap:8px">
+              <span style="font-size:0.75rem; color:var(--text-muted)">⌨️ Or type number:</span>
+              <div style="display:flex; align-items:center; gap:4px">
+                <button type="button" class="btn-step" onclick="stepAiParticipantCount(-1, event)" title="Decrease">−</button>
+                <input
+                  type="number"
+                  id="ai-count-typed-input"
+                  min="2"
+                  max="10"
+                  value="4"
+                  class="ai-number-input"
+                  oninput="onTypeAiParticipantCount(this.value, event)"
+                  title="Type number of AI participants (2 to 10)"
+                  placeholder="2-10"
+                />
+                <button type="button" class="btn-step" onclick="stepAiParticipantCount(1, event)" title="Increase">+</button>
+              </div>
+              <span style="font-size:0.72rem; color:var(--text-muted)">(2 to 10)</span>
+            </div>
+          </div>
+
+          <div class="mode-desc" id="ai-mode-desc">
+            Practice with 4 unique AI participants — each with distinct personalities and debating styles.
+          </div>
+
+          <ul class="mode-features">
+            <li id="ai-feature-participants"><span class="check">✅</span> 4 AI participants (Moderator, Supporter, Opponent, Analyst)</li>
+            <li><span class="check">✅</span> Voice input & AI speech output</li>
+            <li><span class="check">✅</span> Real-time turn management</li>
+            <li><span class="check">✅</span> Full AI performance evaluation</li>
+            <li><span class="check">✅</span> Available 24/7 — no waiting</li>
+          </ul>
+
+          <button class="btn btn-primary btn-full btn-lg" onclick="event.stopPropagation(); selectMode('ai');">
+            Start AI Mode →
+          </button>
+        </div>
+
+        <!-- HUMAN MODE -->
+        <div class="mode-card human-card animate-fade-in" style="animation-delay:0.1s" onclick="selectMode('human')">
+          <span class="mode-icon">👥</span>
+
+          <div style="display:flex; justify-content:center; gap:-8px; margin-bottom:24px">
+            <div style="width:44px;height:44px;border-radius:50%;background:rgba(16,185,129,0.2);border:2px solid rgba(16,185,129,0.4);display:flex;align-items:center;justify-content:center;font-size:1.1rem">R</div>
+            <div style="width:44px;height:44px;border-radius:50%;background:rgba(59,130,246,0.2);border:2px solid rgba(59,130,246,0.4);display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-left:-8px">P</div>
+            <div style="width:44px;height:44px;border-radius:50%;background:rgba(245,158,11,0.2);border:2px solid rgba(245,158,11,0.4);display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-left:-8px">A</div>
+            <div style="width:44px;height:44px;border-radius:50%;background:rgba(236,72,153,0.2);border:2px solid rgba(236,72,153,0.4);display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-left:-8px">+</div>
+          </div>
+
+          <div class="mode-title">Human Mode</div>
+          <div class="mode-desc">
+            Create a room or join with a Room ID. Practice with your classmates, friends, or batchmates.
+          </div>
+
+          <ul class="mode-features">
+            <li><span class="check">✅</span> Real-time multiplayer discussion room</li>
+            <li><span class="check">✅</span> Create room & share Room ID</li>
+            <li><span class="check">✅</span> Text chat + voice input</li>
+            <li><span class="check">✅</span> Discussion timer & turn management</li>
+            <li><span class="check">✅</span> AI feedback after discussion</li>
+          </ul>
+
+          <!-- Two distinct action buttons -->
+          <div class="human-action-btns">
+            <button class="btn-host" id="btn-host-new-room" onclick="event.stopPropagation(); hostHumanRoom(event);">
+              🎯 Host New Room
+            </button>
+            <button class="btn-join-code" id="btn-open-join-modal" onclick="event.stopPropagation(); openJoinCodeModal(event);">
+              🔑 Join with Room Code
+            </button>
+            <a href="/select-topic.html?mode=human"
+               onclick="event.stopPropagation();"
+               style="font-size:0.76rem; color:var(--text-muted); text-align:center; display:block; margin-top:2px">
+              or choose a custom topic first →
+            </a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+<!-- ═══════════════════════════════════════════════════════════
+     CREATE GD ROOM MODAL (HOST)
+═══════════════════════════════════════════════════════════ -->
+<div id="create-room-modal" class="join-code-overlay" onclick="if(event.target===this) closeCreateRoomModal();">
+  <div class="join-code-box" style="max-width: 520px; text-align: left; padding: 32px 30px;">
+    <button class="join-code-close" onclick="closeCreateRoomModal()" title="Close">✕</button>
+
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px">
+      <div style="font-size:2rem">🎯</div>
+      <div>
+        <h2 style="font-size:1.35rem; font-weight:800; margin:0">CREATE GROUP DISCUSSION</h2>
+        <div style="font-size:0.8rem; color:var(--text-muted)">Configure your room and invite human participants</div>
+      </div>
+    </div>
+
+    <form id="create-gd-form" onsubmit="submitCreateRoom(event)">
+      <!-- Topic -->
+      <div style="margin-bottom:16px">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px">Topic</label>
+        <input
+          id="create-topic-input"
+          class="form-input"
+          type="text"
+          placeholder="e.g. AI: Boon or Bane?"
+          value="AI: Boon or Bane?"
+          required
+          style="width:100%; box-sizing:border-box; font-size:0.95rem; font-weight:600; padding:12px 14px; border-radius:10px; background:rgba(255,255,255,0.05); border:1.5px solid rgba(16,185,129,0.3); color:#fff"
+        />
+        <!-- Quick topic pills -->
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px">
+          <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.7rem; padding:4px 8px; border-radius:12px" onclick="setCreateTopic('AI: Boon or Bane?')">AI: Boon or Bane?</button>
+          <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.7rem; padding:4px 8px; border-radius:12px" onclick="setCreateTopic('Work From Home vs Office: Future of Work')">WFH vs Office</button>
+          <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.7rem; padding:4px 8px; border-radius:12px" onclick="setCreateTopic('Social Media: Connecting or Isolating?')">Social Media</button>
+        </div>
+      </div>
+
+      <!-- Joining Time -->
+      <div style="margin-bottom:16px">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px">Joining Time</label>
+        <select id="create-joining-time" class="form-input" style="width:100%; box-sizing:border-box; padding:12px 14px; border-radius:10px; background:rgba(20,28,45,0.95); border:1.5px solid rgba(255,255,255,0.15); color:#fff; font-size:0.9rem">
+          <option value="60">1 minute</option>
+          <option value="120" selected>2 minutes</option>
+          <option value="180">3 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
+        </select>
+      </div>
+
+      <!-- GD Duration -->
+      <div style="margin-bottom:16px">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px">GD Duration</label>
+        <select id="create-gd-duration" class="form-input" style="width:100%; box-sizing:border-box; padding:12px 14px; border-radius:10px; background:rgba(20,28,45,0.95); border:1.5px solid rgba(255,255,255,0.15); color:#fff; font-size:0.9rem">
+          <option value="120">2 minutes</option>
+          <option value="180">3 minutes</option>
+          <option value="300" selected>5 minutes</option>
+          <option value="600">10 minutes</option>
+          <option value="900">15 minutes</option>
+          <option value="1200">20 minutes</option>
+        </select>
+      </div>
+
+      <!-- Maximum Participants -->
+      <div style="margin-bottom:22px">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px">Maximum Participants</label>
+        <select id="create-max-participants" class="form-input" style="width:100%; box-sizing:border-box; padding:12px 14px; border-radius:10px; background:rgba(20,28,45,0.95); border:1.5px solid rgba(255,255,255,0.15); color:#fff; font-size:0.9rem">
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="10">10</option>
+        </select>
+      </div>
+
+      <!-- Submit Button -->
+      <button
+        type="submit"
+        id="btn-submit-create-room"
+        class="btn btn-success btn-full btn-lg"
+        style="padding:14px; font-size:1rem; font-weight:800; border-radius:12px; letter-spacing:0.04em"
+      >
+        CREATE GD ROOM
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JOIN WITH CODE MODAL
+═══════════════════════════════════════════════════════════ -->
+<div id="join-code-modal" class="join-code-overlay" onclick="if(event.target===this) closeJoinCodeModal();">
+  <div class="join-code-box">
+
+    <button class="join-code-close" onclick="closeJoinCodeModal()" title="Close">✕</button>
+
+    <div style="font-size:2.8rem; margin-bottom:12px; animation:float 3s ease infinite">🔑</div>
+    <h2 style="font-size:1.4rem; font-weight:800; margin-bottom:6px">Join Human GD Room</h2>
+    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:20px">
+      Enter or paste the Room Code (or full invite link) shared by your host
+    </p>
+
+    <!-- Code Input with integrated Paste button -->
+    <div style="position:relative; margin-bottom:6px">
+      <input
+        id="room-code-input"
+        class="room-code-input-big"
+        type="text"
+        placeholder="GD····"
+        maxlength="120"
+        autocomplete="off"
+        spellcheck="false"
+        style="padding-right:90px"
+      />
+      <button
+        id="btn-modal-paste"
+        type="button"
+        onclick="pasteCodeFromClipboard()"
+        title="Paste room code from clipboard"
+        style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:rgba(16,185,129,0.18); border:1px solid rgba(52,211,153,0.45); color:#34d399; font-weight:700; font-size:0.8rem; padding:8px 12px; border-radius:8px; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.2s"
+      >
+        📋 Paste
+      </button>
+    </div>
+    <div id="join-code-hint" class="join-hint dim">Accepts a code like GD2341 or a full invite URL</div>
+
+    <!-- Dual Actions: Join Now or Quick Paste & Join -->
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px">
+      <button
+        class="btn btn-success btn-full btn-lg"
+        id="join-code-submit"
+        onclick="submitJoinCode()"
+        style="font-size:1rem; font-weight:700; padding:14px"
+      >
+        Join Discussion Now →
+      </button>
+
+      <button
+        type="button"
+        id="btn-quick-paste-join"
+        onclick="quickPasteAndJoin()"
+        style="width:100%; padding:12px; font-size:0.88rem; font-weight:700; border-radius:12px; cursor:pointer; background:rgba(108,99,255,0.12); border:1px solid rgba(108,99,255,0.3); color:#a78bfa; display:flex; align-items:center; justify-content:center; gap:8px; transition:all 0.2s"
+      >
+        ⚡ Paste from Clipboard &amp; Join Instantly
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  AppUtils.requireAuth();
+  const user = AppUtils.getUser();
+  if (user) {
+    document.getElementById('sidebar-name').textContent = user.name;
+    document.getElementById('sidebar-email').textContent = user.email;
+    document.getElementById('sidebar-avatar').textContent = user.name.charAt(0).toUpperCase();
+  }
+
+  // AI Participant Configurations
+  const AI_PARTICIPANT_PRESETS = {
+    2: {
+      count: 2,
+      desc: 'Duo Debate: 2 AI participants (Arjun & Meera) for high speaking opportunities.',
+      feature: '2 AI participants (Arjun - Supporter & Meera - Opponent)',
+      agents: [
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' }
+      ]
+    },
+    3: {
+      count: 3,
+      desc: 'Trio Discussion: 3 AI participants led by a Moderator with pro and con viewpoints.',
+      feature: '3 AI participants (Priya - Moderator, Arjun - Supporter, Meera - Opponent)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' }
+      ]
+    },
+    4: {
+      count: 4,
+      desc: 'Standard Panel: 4 AI participants with distinct personalities and debating styles.',
+      feature: '4 AI participants (Moderator, Supporter, Opponent, Analyst)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' }
+      ]
+    },
+    5: {
+      count: 5,
+      desc: 'Extended Panel: 5 AI participants adding Vikram the Realist for execution checks.',
+      feature: '5 AI participants (Moderator, Supporter, Opponent, Analyst, Realist)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' }
+      ]
+    },
+    6: {
+      count: 6,
+      desc: 'Full Board GD: 6 AI participants covering moderation, critical points, and synthesis.',
+      feature: '6 AI participants (Full panel including Ananya the Synthesizer)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' },
+        { emoji: '👩‍💻', bg: 'rgba(236,72,153,0.15)', color: '#f472b6', title: 'Ananya - Synthesizer' }
+      ]
+    },
+    7: {
+      count: 7,
+      desc: 'Extended GD: 7 AI participants with Neha the Questioner.',
+      feature: '7 AI participants (+ Neha - Questioner)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' },
+        { emoji: '👩‍💻', bg: 'rgba(236,72,153,0.15)', color: '#f472b6', title: 'Ananya - Synthesizer' },
+        { emoji: '🙋‍♀️', bg: 'rgba(20,184,166,0.15)', color: '#14b8a6', title: 'Neha - Questioner' }
+      ]
+    },
+    8: {
+      count: 8,
+      desc: 'Large Panel: 8 AI participants adding Karthik as Devil\'s Advocate.',
+      feature: '8 AI participants (+ Karthik - Devil\'s Advocate)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' },
+        { emoji: '👩‍💻', bg: 'rgba(236,72,153,0.15)', color: '#f472b6', title: 'Ananya - Synthesizer' },
+        { emoji: '🙋‍♀️', bg: 'rgba(20,184,166,0.15)', color: '#14b8a6', title: 'Neha - Questioner' },
+        { emoji: '🕵️‍♂️', bg: 'rgba(99,102,241,0.15)', color: '#6366f1', title: 'Karthik - Devil\'s Advocate' }
+      ]
+    },
+    9: {
+      count: 9,
+      desc: 'Massive GD: 9 AI participants adding Sneha the Peacemaker.',
+      feature: '9 AI participants (+ Sneha - Peacemaker)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' },
+        { emoji: '👩‍💻', bg: 'rgba(236,72,153,0.15)', color: '#f472b6', title: 'Ananya - Synthesizer' },
+        { emoji: '🙋‍♀️', bg: 'rgba(20,184,166,0.15)', color: '#14b8a6', title: 'Neha - Questioner' },
+        { emoji: '🕵️‍♂️', bg: 'rgba(99,102,241,0.15)', color: '#6366f1', title: 'Karthik - Devil\'s Advocate' },
+        { emoji: '🕊️', bg: 'rgba(244,63,94,0.15)', color: '#f43f5e', title: 'Sneha - Peacemaker' }
+      ]
+    },
+    10: {
+      count: 10,
+      desc: 'Maximum GD: 10 AI participants covering every possible viewpoint.',
+      feature: '10 AI participants (+ Rahul - Innovator)',
+      agents: [
+        { emoji: '👩‍🏫', bg: 'rgba(156,39,176,0.15)', color: '#c084fc', title: 'Priya - Moderator' },
+        { emoji: '🧑‍💼', bg: 'rgba(16,185,129,0.15)', color: '#34d399', title: 'Arjun - Supporter' },
+        { emoji: '👩‍💼', bg: 'rgba(239,68,68,0.15)', color: '#f87171', title: 'Meera - Opponent' },
+        { emoji: '👨‍🔬', bg: 'rgba(59,130,246,0.15)', color: '#60a5fa', title: 'Ravi - Analyst' },
+        { emoji: '👨‍💼', bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', title: 'Vikram - Realist' },
+        { emoji: '👩‍💻', bg: 'rgba(236,72,153,0.15)', color: '#f472b6', title: 'Ananya - Synthesizer' },
+        { emoji: '🙋‍♀️', bg: 'rgba(20,184,166,0.15)', color: '#14b8a6', title: 'Neha - Questioner' },
+        { emoji: '🕵️‍♂️', bg: 'rgba(99,102,241,0.15)', color: '#6366f1', title: 'Karthik - Devil\'s Advocate' },
+        { emoji: '🕊️', bg: 'rgba(244,63,94,0.15)', color: '#f43f5e', title: 'Sneha - Peacemaker' },
+        { emoji: '💡', bg: 'rgba(234,179,8,0.15)', color: '#eab308', title: 'Rahul - Innovator' }
+      ]
+    }
+  };
+
+  let selectedAiCount = parseInt(localStorage.getItem('gd_ai_participants') || '4', 10);
+  if (isNaN(selectedAiCount) || selectedAiCount < 2 || selectedAiCount > 10) selectedAiCount = 4;
+
+  function setAiParticipantCount(count, event) {
+    if (event) event.stopPropagation();
+    selectedAiCount = count;
+    localStorage.setItem('gd_ai_participants', count);
+
+    // Update active button
+    document.querySelectorAll('.ai-count-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.count, 10) === count);
+    });
+
+    const preset = AI_PARTICIPANT_PRESETS[count] || AI_PARTICIPANT_PRESETS[4];
+
+    // Update badge display
+    const badge = document.getElementById('ai-count-display-badge');
+    if (badge) badge.textContent = `${count} AI`;
+
+    // Update description & feature list
+    const descEl = document.getElementById('ai-mode-desc');
+    if (descEl) descEl.textContent = preset.desc;
+
+    const featEl = document.getElementById('ai-feature-participants');
+    if (featEl) featEl.innerHTML = `<span class="check">✅</span> ${preset.feature}`;
+
+    // Update preview avatars
+    const previewEl = document.getElementById('ai-agents-preview');
+    if (previewEl) {
+      previewEl.innerHTML = preset.agents.map(a =>
+        `<div class="agent-mini" style="background:${a.bg}; color:${a.color}" title="${a.title}">${a.emoji}</div>`
+      ).join('');
+    }
+
+    // Keep the typed input in sync
+    const typedInput = document.getElementById('ai-count-typed-input');
+    if (typedInput && parseInt(typedInput.value, 10) !== count) {
+      typedInput.value = count;
+    }
+  }
+
+  function onTypeAiParticipantCount(val, event) {
+    if (event) event.stopPropagation();
+    const parsed = parseInt(val, 10);
+    if (isNaN(parsed)) return;
+    const clamped = Math.max(2, Math.min(10, parsed));
+    setAiParticipantCount(clamped);
+  }
+
+  function stepAiParticipantCount(delta, event) {
+    if (event) event.stopPropagation();
+    const next = Math.max(2, Math.min(10, selectedAiCount + delta));
+    setAiParticipantCount(next);
+  }
+
+  // Initialize selected count on page load
+  setTimeout(() => setAiParticipantCount(selectedAiCount), 0);
+
+  function selectMode(mode) {
+    localStorage.setItem('gd_selected_mode', mode);
+    if (mode === 'ai') {
+      localStorage.setItem('gd_ai_participants', selectedAiCount);
+      window.location.href = `/select-topic.html?mode=ai&aiCount=${selectedAiCount}`;
+    } else {
+      window.location.href = `/select-topic.html?mode=${mode}`;
+    }
+  }
+
+  function openCreateRoomModal(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    document.getElementById('create-room-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('create-topic-input')?.focus(), 80);
+  }
+
+  function closeCreateRoomModal() {
+    document.getElementById('create-room-modal').style.display = 'none';
+  }
+
+  function setCreateTopic(topic) {
+    const input = document.getElementById('create-topic-input');
+    if (input) input.value = topic;
+  }
+
+  async function submitCreateRoom(e) {
+    if (e) e.preventDefault();
+    const btn = document.getElementById('btn-submit-create-room');
+    const topic = document.getElementById('create-topic-input')?.value.trim();
+    const joiningDuration = parseInt(document.getElementById('create-joining-time')?.value || '120', 10);
+    const gdDuration = parseInt(document.getElementById('create-gd-duration')?.value || '300', 10);
+    const maxParticipants = parseInt(document.getElementById('create-max-participants')?.value || '6', 10);
+
+    if (!topic) {
+      AppUtils.showToast('Please enter a discussion topic', 'error');
+      return;
+    }
+
+    if (btn) {
+      btn.innerHTML = '<span class="spinner" style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px"></span> Creating Room...';
+      btn.disabled = true;
+    }
+
+    try {
+      const res = await API.Rooms.create(topic, 'General', joiningDuration, gdDuration, maxParticipants);
+      if (res && res.room) {
+        if (res.session) localStorage.setItem('gd_current_session', JSON.stringify(res.session));
+        window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}`;
+        return;
+      }
+      throw new Error(res.error || 'Failed to create room');
+    } catch (err) {
+      console.error('Room create error:', err);
+      AppUtils.showToast(err.message || 'Could not create room', 'error');
+      if (btn) {
+        btn.innerHTML = 'CREATE GD ROOM';
+        btn.disabled = false;
+      }
+    }
+  }
+
+  function hostHumanRoom(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    openCreateRoomModal(e);
+  }
+
+  /* ── Join Code Modal ────────────────────────────────────────── */
+  function openJoinCodeModal(e, prefill) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    const modal = document.getElementById('join-code-modal');
+    modal.style.display = 'flex';
+    const inp = document.getElementById('room-code-input');
+    if (prefill && inp) {
+      inp.value = prefill;
+      validateRoomInput(inp);
+    }
+    setTimeout(() => inp?.focus(), 60);
+  }
+
+  function closeJoinCodeModal() {
+    document.getElementById('join-code-modal').style.display = 'none';
+    const hint = document.getElementById('join-code-hint');
+    if (hint) { hint.textContent = 'Accepts a code like GD-X7K92 or a full invite URL'; hint.className = 'join-hint dim'; }
+    const inp = document.getElementById('room-code-input');
+    if (inp) { inp.value = ''; inp.className = 'room-code-input-big'; }
+    const btn = document.getElementById('join-code-submit');
+    if (btn) { btn.innerHTML = 'Join Discussion Now →'; btn.disabled = false; }
+  }
+
+  /* Live validation + auto-caps + URL paste detection */
+  function validateRoomInput(inp) {
+    let raw = inp.value;
+    if (raw.includes('roomCode=') || raw.includes('roomId=')) {
+      try {
+        const u = new URL(raw, window.location.origin);
+        const extracted = u.searchParams.get('roomCode') || u.searchParams.get('roomId');
+        if (extracted) raw = extracted;
+      } catch (e) {}
+    }
+    const clean = raw.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase().slice(0, 12);
+    inp.value = clean;
+    const hint = document.getElementById('join-code-hint');
+    inp.classList.remove('error');
+    if (!clean) {
+      hint.textContent = 'Accepts a code like GD-X7K92 or a full invite URL';
+      hint.className = 'join-hint dim';
+    } else if (clean.length < 4) {
+      hint.textContent = 'Room codes are at least 4 characters';
+      hint.className = 'join-hint err';
+    } else {
+      hint.textContent = `✓ Room code looks good — press Join to validate & enter`;
+      hint.className = 'join-hint ok';
+    }
+  }
+
+  const roomCodeInp = document.getElementById('room-code-input');
+  if (roomCodeInp) {
+    roomCodeInp.addEventListener('input', () => validateRoomInput(roomCodeInp));
+    roomCodeInp.addEventListener('paste', () => setTimeout(() => validateRoomInput(roomCodeInp), 0));
+    roomCodeInp.addEventListener('keydown', e => { if (e.key === 'Enter') submitJoinCode(); });
+  }
+
+  async function submitJoinCode() {
+    const inp = document.getElementById('room-code-input');
+    const btn = document.getElementById('join-code-submit');
+    let raw = inp?.value.trim() || '';
+    if (raw.includes('roomCode=') || raw.includes('roomId=')) {
+      try {
+        const u = new URL(raw, window.location.origin);
+        raw = u.searchParams.get('roomCode') || u.searchParams.get('roomId') || raw;
+      } catch (e) {}
+    }
+    const code = raw.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase();
+    if (!code || code.length < 3) {
+      if (inp) inp.classList.add('error');
+      const hint = document.getElementById('join-code-hint');
+      if (hint) { hint.textContent = 'Please enter a valid Room Code'; hint.className = 'join-hint err'; }
+      setTimeout(() => inp?.classList.remove('error'), 700);
+      return;
+    }
+
+    if (btn) {
+      btn.innerHTML = 'Validating Room...';
+      btn.disabled = true;
+    }
+
+    try {
+      const validation = await API.Rooms.validate(code);
+      if (!validation.valid) {
+        if (inp) inp.classList.add('error');
+        const hint = document.getElementById('join-code-hint');
+        if (hint) { hint.textContent = validation.error || 'Cannot join room'; hint.className = 'join-hint err'; }
+        AppUtils.showToast(validation.error || 'Cannot join room', 'error');
+        if (btn) { btn.innerHTML = 'Join Discussion Now →'; btn.disabled = false; }
+        return;
+      }
+
+      // Valid room! Redirect to room page
+      const roomCodeTarget = validation.room.room_code || validation.room.room_id || code;
+      window.location.href = `/human-room.html?action=join&roomCode=${encodeURIComponent(roomCodeTarget)}`;
+    } catch (err) {
+      if (inp) inp.classList.add('error');
+      const hint = document.getElementById('join-code-hint');
+      if (hint) { hint.textContent = err.message || 'Room validation failed'; hint.className = 'join-hint err'; }
+      AppUtils.showToast(err.message || 'Room not found or invalid', 'error');
+      if (btn) { btn.innerHTML = 'Join Discussion Now →'; btn.disabled = false; }
+    }
+  }
+
+  /* ── Clipboard Paste Functions ────────────────────────────── */
+  async function pasteCodeFromClipboard() {
+    const inp = document.getElementById('room-code-input');
+    const pasteBtn = document.getElementById('btn-modal-paste');
+    try {
+      let text = '';
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      if (!text) {
+        inp?.focus();
+        if (window.AppUtils && AppUtils.showToast) {
+          AppUtils.showToast('Clipboard is empty. Press Ctrl+V in the box to paste.', 'info');
+        }
+        return;
+      }
+      if (inp) {
+        inp.value = text.trim();
+        validateRoomInput(inp);
+        if (pasteBtn) {
+          pasteBtn.innerHTML = '✓ Pasted!';
+          pasteBtn.style.background = 'rgba(16,185,129,0.35)';
+          setTimeout(() => {
+            pasteBtn.innerHTML = '📋 Paste';
+            pasteBtn.style.background = 'rgba(16,185,129,0.18)';
+          }, 1800);
+        }
+        if (window.AppUtils && AppUtils.showToast) {
+          AppUtils.showToast(`📋 Pasted code: ${inp.value}`, 'success');
+        }
+      }
+    } catch (err) {
+      console.warn('Clipboard read error:', err);
+      inp?.focus();
+      if (window.AppUtils && AppUtils.showToast) {
+        AppUtils.showToast('Please press Ctrl+V inside the box to paste.', 'info');
+      }
+    }
+  }
+
+  async function quickPasteAndJoin() {
+    const inp = document.getElementById('room-code-input');
+    try {
+      let text = '';
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      if (!text) {
+        if (window.AppUtils && AppUtils.showToast) {
+          AppUtils.showToast('Clipboard is empty! Copy your room code or invite link first.', 'error');
+        }
+        inp?.focus();
+        return;
+      }
+      if (inp) {
+        inp.value = text.trim();
+        validateRoomInput(inp);
+        if (window.AppUtils && AppUtils.showToast) {
+          AppUtils.showToast(`⚡ Joining room ${inp.value}...`, 'info');
+        }
+        setTimeout(() => submitJoinCode(), 250);
+      }
+    } catch (err) {
+      console.warn('Quick paste error:', err);
+      inp?.focus();
+      if (window.AppUtils && AppUtils.showToast) {
+        AppUtils.showToast('Please paste your code manually and click Join.', 'info');
+      }
+    }
+  }
+
+  /* Listen for global Ctrl+V when join modal is open */
+  document.addEventListener('paste', (e) => {
+    const modal = document.getElementById('join-code-modal');
+    if (modal && modal.style.display === 'flex') {
+      const inp = document.getElementById('room-code-input');
+      if (inp && document.activeElement !== inp) {
+        const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+        if (text) {
+          e.preventDefault();
+          inp.value = text.trim();
+          validateRoomInput(inp);
+          if (window.AppUtils && AppUtils.showToast) {
+            AppUtils.showToast(`📋 Pasted: ${inp.value}`, 'success');
+          }
+        }
+      }
+    }
+  });
+
+  /* ── Auto-open join modal if page URL has ?roomId=... or ?action=join&roomId=... ── */
+  (function checkUrlAutoJoin() {
+    const p = new URLSearchParams(window.location.search);
+    const rid = p.get('roomId') || p.get('room');
+    const act = p.get('action');
+    if (rid && (act === 'join' || !act)) {
+      openJoinCodeModal(null, rid.trim().toUpperCase());
+    }
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — GD Simulator</title>
+  <meta name="description" content="Your GD Simulator dashboard. View your performance stats, recent sessions, and start a new group discussion." />
+  <link rel="stylesheet" href="/css/main.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    .welcome-banner {
+      background: var(--grad-primary);
+      border-radius: var(--radius-xl);
+      padding: 32px 36px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .welcome-banner::before {
+      content: '';
+      position: absolute;
+      right: -60px; top: -60px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.08);
+    }
+    .welcome-banner::after {
+      content: '';
+      position: absolute;
+      right: 60px; bottom: -40px;
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.05);
+    }
+    .welcome-text h2 { color: white; font-size: 1.6rem; margin-bottom: 6px; }
+    .welcome-text p { color: rgba(255,255,255,0.75); font-size: 0.9rem; }
+    .welcome-actions { display: flex; gap: 12px; z-index: 1; flex-shrink: 0; }
+    .btn-white { background: white; color: var(--accent-primary); font-weight: 700; }
+    .btn-white:hover { background: rgba(255,255,255,0.9); color: var(--accent-primary); transform: translateY(-2px); }
+    .btn-white-outline { background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); }
+    .btn-white-outline:hover { background: rgba(255,255,255,0.25); color: white; transform: translateY(-2px); }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .session-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      transition: all var(--transition-fast);
+      cursor: pointer;
+    }
+    .session-row:last-child { border-bottom: none; }
+    .session-row:hover { padding-left: 8px; }
+
+    .session-mode-icon {
+      width: 40px; height: 40px;
+      border-radius: var(--radius-md);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; flex-shrink: 0;
+    }
+    .session-info { flex: 1; min-width: 0; }
+    .session-topic { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+    .session-score { font-family: var(--font-display); font-size: 1.2rem; font-weight: 800; }
+
+    .api-key-banner {
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.25);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .api-key-banner.hidden { display: none; }
+
+    .chart-container { position: relative; height: 200px; }
+
+    @media (max-width: 900px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .welcome-actions { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Main</div>
+      <a href="/dashboard.html" class="nav-item active"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item"><span class="icon">▶️</span> Start GD</a>
+      <div class="nav-section-label">Analytics</div>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item"><span class="icon">📋</span> GD History</a>
+      <div class="nav-section-label">Account</div>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+      <a href="#" class="nav-item" onclick="API.Auth.logout()"><span class="icon">🚪</span> Logout</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-card" onclick="window.location.href='/profile.html'" id="sidebar-user">
+        <div class="user-avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="sidebar-name">Loading...</div>
+          <div class="email" id="sidebar-email">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+    <div class="page-header">
+      <div class="page-title" id="welcome-title">Welcome back! 👋</div>
+      <div class="page-subtitle">Ready to practice today?</div>
+    </div>
+
+    <div class="page-content">
+
+      <!-- API Key Banner -->
+      <div class="api-key-banner" id="api-key-banner">
+        <span style="font-size:1.5rem">🔑</span>
+        <div style="flex:1">
+          <div style="font-weight:600; color: var(--accent-yellow); font-size:0.9rem">Gemini API Key Required</div>
+          <div style="font-size:0.78rem; color: var(--text-muted)">Configure your Gemini API key to enable AI features</div>
+        </div>
+        <button class="btn btn-sm" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.3)"
+          onclick="showApiKeyModal()">Configure</button>
+      </div>
+
+      <!-- Welcome Banner -->
+      <div class="welcome-banner">
+        <div class="welcome-text">
+          <h2>Start Practicing GD Today</h2>
+          <p>Build confidence. Improve fluency. Master group discussions.</p>
+        </div>
+        <div class="welcome-actions">
+          <a href="/select-mode.html" class="btn btn-white">
+            ▶️ Start New GD
+          </a>
+          <a href="/human-room.html?action=join" class="btn btn-white-outline">
+            🔑 Join Room with Code
+          </a>
+          <a href="/performance.html" class="btn btn-white-outline">
+            📊 View Progress
+          </a>
+        </div>
+      </div>
+
+      <!-- Stats Grid -->
+      <div class="stats-grid stagger mb-24" id="stats-grid">
+        <div class="stat-card animate-fade-in">
+          <div class="stat-icon" style="background:rgba(108,99,255,0.15); color:var(--accent-secondary)">🎯</div>
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-label">Total GDs</div>
+        </div>
+        <div class="stat-card animate-fade-in">
+          <div class="stat-icon" style="background:rgba(16,185,129,0.15); color:#34d399">⭐</div>
+          <div class="stat-value" id="stat-avg">—</div>
+          <div class="stat-label">Average Score</div>
+        </div>
+        <div class="stat-card animate-fade-in">
+          <div class="stat-icon" style="background:rgba(245,158,11,0.15); color:#fbbf24">🏆</div>
+          <div class="stat-value" id="stat-best">—</div>
+          <div class="stat-label">Best Score</div>
+        </div>
+        <div class="stat-card animate-fade-in">
+          <div class="stat-icon" style="background:rgba(236,72,153,0.15); color:#f472b6">🕐</div>
+          <div class="stat-value" id="stat-time">0m</div>
+          <div class="stat-label">Practice Time</div>
+        </div>
+      </div>
+
+      <!-- Charts + Recent Sessions -->
+      <div class="grid-3">
+        <!-- Progress Chart -->
+        <div class="glass-card-flat" style="padding:24px">
+          <div class="section-title">
+            Score Progression
+            <a href="/performance.html" style="font-size:0.75rem; color:var(--accent-secondary)">See all →</a>
+          </div>
+          <div class="chart-container">
+            <canvas id="progress-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Recent Sessions -->
+        <div class="glass-card-flat" style="padding:24px">
+          <div class="section-title">
+            Recent Sessions
+            <a href="/history.html" style="font-size:0.75rem; color:var(--accent-secondary)">See all →</a>
+          </div>
+          <div id="recent-sessions">
+            <div style="text-align:center; color:var(--text-muted); padding:32px 0; font-size:0.85rem">
+              No sessions yet. <a href="/select-mode.html">Start your first GD!</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Start Cards -->
+      <div style="margin-top:24px">
+        <div class="section-title">Quick Start</div>
+        <div class="grid-2">
+          <div class="glass-card" style="padding:28px; cursor:pointer" onclick="window.location.href='/select-mode.html?mode=ai'">
+            <div style="font-size:2.5rem; margin-bottom:12px">🤖</div>
+            <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:700; margin-bottom:8px">AI Group Discussion</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px">Practice with 4 AI participants — Supporter, Opponent, Analyst & Moderator. Perfect for solo practice.</div>
+            <span class="badge badge-primary">Instant Start</span>
+          </div>
+          <div class="glass-card" style="padding:28px; cursor:pointer" onclick="window.location.href='/select-mode.html?mode=human'">
+            <div style="font-size:2.5rem; margin-bottom:12px">👥</div>
+            <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:700; margin-bottom:8px">Human Group Discussion</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px">Create or join a live room with real participants. Real-time chat and voice communication.</div>
+            <span class="badge badge-green">Multiplayer</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- API Key Modal -->
+<div id="api-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(4px)">
+  <div class="glass-card-flat" style="padding:32px; max-width:480px; width:90%; border-radius:var(--radius-xl)">
+    <h3 style="margin-bottom:8px">🔑 Configure Gemini API Key</h3>
+    <p style="font-size:0.85rem; margin-bottom:20px">
+      Get your free key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a>.
+      The key is stored locally in your browser.
+    </p>
+    <div class="form-group">
+      <label class="form-label">Gemini API Key</label>
+      <input id="api-key-input" class="form-input" type="password" placeholder="AIza..." />
+    </div>
+    <div style="display:flex; gap:12px; margin-top:8px">
+      <button class="btn btn-primary" onclick="saveApiKey()">Save Key</button>
+      <button class="btn btn-secondary" onclick="closeApiModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  AppUtils.requireAuth();
+
+  const user = AppUtils.getUser();
+  if (user) {
+    document.getElementById('welcome-title').textContent = `Welcome back, ${user.name}! 👋`;
+    document.getElementById('sidebar-name').textContent = user.name;
+    document.getElementById('sidebar-email').textContent = user.email;
+    document.getElementById('sidebar-avatar').textContent = user.name.charAt(0).toUpperCase();
+  }
+
+  // Check API key
+  const key = AppUtils.getGeminiKey();
+  if (key) document.getElementById('api-key-banner').classList.add('hidden');
+  else document.getElementById('api-key-input') && (document.getElementById('api-key-input').value = '');
+
+  // Load stats
+  async function loadDashboard() {
+    try {
+      const { stats, progression } = await API.Performance.getStats();
+      if (stats) {
+        document.getElementById('stat-total').textContent = stats.total_gds || 0;
+        document.getElementById('stat-avg').textContent = stats.avg_score ? `${stats.avg_score}%` : '—';
+        document.getElementById('stat-best').textContent = stats.best_score ? `${stats.best_score}%` : '—';
+        const mins = Math.round((stats.total_practice_time || 0) / 60);
+        document.getElementById('stat-time').textContent = mins > 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`;
+      }
+
+      if (progression && progression.length > 0) {
+        renderProgressChart(progression);
+      }
+
+      // Load recent sessions
+      const { sessions } = await API.Sessions.list(5);
+      renderRecentSessions(sessions);
+    } catch (err) {
+      console.error('Dashboard load error:', err);
+    }
+  }
+
+  function renderProgressChart(progression) {
+    const ctx = document.getElementById('progress-chart');
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: progression.map((_, i) => `GD ${i + 1}`),
+        datasets: [{
+          label: 'Overall Score',
+          data: progression.map(p => p.overall_score),
+          borderColor: '#6c63ff',
+          backgroundColor: 'rgba(108,99,255,0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointBackgroundColor: '#6c63ff',
+          pointRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+          x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+        }
+      }
+    });
+  }
+
+  function renderRecentSessions(sessions) {
+    const container = document.getElementById('recent-sessions');
+    if (!sessions || sessions.length === 0) return;
+
+    container.innerHTML = sessions.map(s => {
+      const score = s.overall_score || 0;
+      const color = AppUtils.getScoreColor(score);
+      return `
+        <div class="session-row" onclick="window.location.href='/results.html?session=${s.session_id}'">
+          <div class="session-mode-icon" style="background:${s.mode === 'ai' ? 'rgba(108,99,255,0.15)' : 'rgba(16,185,129,0.15)'}">
+            ${s.mode === 'ai' ? '🤖' : '👥'}
+          </div>
+          <div class="session-info">
+            <div class="session-topic">${s.topic}</div>
+            <div class="session-meta">${AppUtils.formatDate(s.created_at)} · ${s.category || 'General'}</div>
+          </div>
+          <div class="session-score" style="color:${color}">${Math.round(score)}%</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function showApiKeyModal() {
+    document.getElementById('api-modal').style.display = 'flex';
+    const key = AppUtils.getGeminiKey();
+    document.getElementById('api-key-input').value = key || '';
+  }
+
+  function closeApiModal() {
+    document.getElementById('api-modal').style.display = 'none';
+  }
+
+  function saveApiKey() {
+    const key = document.getElementById('api-key-input').value.trim();
+    if (!key) { AppUtils.showToast('Please enter an API key', 'error'); return; }
+    localStorage.setItem('gd_gemini_key', key);
+    document.getElementById('api-key-banner').classList.add('hidden');
+    closeApiModal();
+    AppUtils.showToast('API key saved! 🎉', 'success');
+  }
+
+  loadDashboard();
+</script>
+</body>
+</html>

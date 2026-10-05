@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GD Results — GD Simulator</title>
+  <meta name="description" content="Detailed AI-powered Group Discussion performance analysis with 10 evaluation metrics, behavioral stats, and personalized improvement plan." />
+  <link rel="stylesheet" href="/css/main.css" />
+  <link rel="stylesheet" href="/css/results.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/dashboard.html" class="nav-item"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item"><span class="icon">▶️</span> Start GD</a>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item"><span class="icon">📋</span> GD History</a>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+      <a href="#" class="nav-item" onclick="API.Auth.logout()"><span class="icon">🚪</span> Logout</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="sidebar-name">Loading...</div>
+          <div class="email" id="sidebar-email">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content" style="overflow-y:auto">
+
+    <!-- Loading State -->
+    <div id="loading-state" style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; gap:16px">
+      <div class="spinner" style="width:48px; height:48px; border-width:4px"></div>
+      <div style="font-size:1.1rem; font-weight:600; color:var(--text-primary)">Analyzing your GD performance...</div>
+      <div style="font-size:0.85rem; color:var(--text-muted)">The AI is reviewing the full transcript. This takes a few seconds.</div>
+    </div>
+
+    <!-- Results Content (hidden until loaded) -->
+    <div id="results-content" style="display:none">
+
+      <!-- Hero Section -->
+      <div class="results-hero">
+        <div style="display:inline-flex; align-items:center; gap:8px; padding:6px 16px; background:rgba(108,99,255,0.1); border:1px solid rgba(108,99,255,0.2); border-radius:var(--radius-full); font-size:0.8rem; color:var(--accent-secondary); margin-bottom:20px">
+          🏆 GD Performance Results
+        </div>
+
+        <!-- Animated Score Ring -->
+        <div class="overall-score-ring">
+          <svg width="180" height="180" viewBox="0 0 180 180">
+            <circle cx="90" cy="90" r="78" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="14"/>
+            <circle id="score-circle" cx="90" cy="90" r="78" fill="none" stroke="url(#scoreGrad)" stroke-width="14"
+              stroke-linecap="round" stroke-dasharray="490" stroke-dashoffset="490"
+              style="transition: stroke-dashoffset 2s cubic-bezier(0.4,0,0.2,1)"/>
+            <defs>
+              <linearGradient id="scoreGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#6c63ff"/>
+                <stop offset="100%" stop-color="#ec4899"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="score-ring-text">
+            <div class="overall-score-value text-gradient" id="overall-score-display">0</div>
+            <div style="font-size:0.75rem; color:var(--text-muted)">out of 100</div>
+          </div>
+        </div>
+
+        <div class="score-grade" id="score-grade-badge">Loading...</div>
+        <h1 style="font-size:1.5rem; margin:8px 0 4px" id="results-topic">GD Performance Analysis</h1>
+        <p id="results-meta" style="font-size:0.82rem; color:var(--text-muted)"></p>
+
+        <!-- Placement Readiness -->
+        <div class="placement-badge" id="placement-badge" style="display:none; margin-top:20px">
+          <div class="placement-badge-icon" id="placement-icon">🎓</div>
+          <div>
+            <div class="placement-badge-label">Placement Readiness</div>
+            <div class="placement-badge-text" id="placement-text"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HOST GD SUMMARY SECTION (Section 27) -->
+      <div id="host-summary-section" style="display:none; padding: 0 40px 24px;">
+        <div style="background: linear-gradient(145deg, rgba(16,24,40,0.95) 0%, rgba(10,14,28,0.98) 100%); border: 1.5px solid rgba(52,211,153,0.35); border-radius: 20px; padding: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.4)">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px">
+            <div style="display:flex; align-items:center; gap:10px">
+              <span style="font-size:1.6rem">👥</span>
+              <div>
+                <h2 style="font-size:1.25rem; font-weight:800; margin:0">GROUP DISCUSSION SUMMARY (HOST DASHBOARD)</h2>
+                <div style="font-size:0.8rem; color:var(--text-muted)" id="host-gd-meta">Topic · Duration · Participants</div>
+              </div>
+            </div>
+            <span class="badge badge-success" style="font-size:0.78rem">👑 Host Administrator</span>
+          </div>
+
+          <div style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); margin-bottom:10px">
+            Participant Scoreboard (Click any participant to view their detailed performance report)
+          </div>
+          <div id="host-participants-table" style="display:flex; flex-direction:column; gap:8px">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Executive Summary Banner -->
+      <div style="padding:0 40px 20px" id="summary-section">
+        <div class="exec-summary-card">
+          <div class="exec-summary-header">
+            <span style="font-size:1.4rem">💡</span>
+            <span style="font-weight:700; font-size:1.1rem; color:var(--text-primary)">Simple Performance Verdict</span>
+          </div>
+          <div class="exec-summary-grid">
+            <div class="exec-box strength-box">
+              <div class="exec-box-title">🟢 Top Strength</div>
+              <div class="exec-box-content" id="exec-strength">Loading...</div>
+            </div>
+            <div class="exec-box focus-box">
+              <div class="exec-box-title">🔴 Key Focus Area</div>
+              <div class="exec-box-content" id="exec-focus">Loading...</div>
+            </div>
+            <div class="exec-box action-box">
+              <div class="exec-box-title">🚀 Immediate Action Step</div>
+              <div class="exec-box-content" id="exec-action">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs for Easy Section Switching -->
+      <div style="padding:0 40px 24px; display:flex; gap:10px; overflow-x:auto; flex-wrap:wrap">
+        <button class="results-tab active" onclick="switchResultTab('all', this)">🌐 All Analysis</button>
+        <button class="results-tab" onclick="switchResultTab('summary', this)">💡 Verdict Summary</button>
+        <button class="results-tab" onclick="switchResultTab('projection', this)">🧮 Score Projection</button>
+        <button class="results-tab" onclick="switchResultTab('metrics', this)">📊 10-Metric Breakdown</button>
+        <button class="results-tab" onclick="switchResultTab('plan', this)">🎯 Action Plan</button>
+        <button class="results-tab" onclick="switchResultTab('transcript', this)">📝 Transcript</button>
+      </div>
+
+      <!-- Behavioral Stats Panel -->
+      <div style="padding:0 40px 24px" id="behavioral-section">
+        <h2 class="section-heading">📈 Behavioral Metrics</h2>
+        <div class="behavioral-grid" id="behavioral-grid"></div>
+      </div>
+
+      <!-- Score Projection & Formula Details -->
+      <div style="padding:0 40px 24px" id="projection-section">
+        <h2 class="section-heading">🧮 How Your Score Was Projected</h2>
+        <div class="projection-card">
+          <div class="projection-header">
+            <div class="projection-badge-level" id="projection-level">🔥 Active Engagement</div>
+            <div style="font-size:0.85rem; color:var(--text-muted)" id="projection-summary">Calculated using 10 weighted metrics based on active transcript turns.</div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="projection-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Weight</th>
+                  <th>Raw Score</th>
+                  <th>Weighted Contribution</th>
+                  <th>Discussion Activity Rationale</th>
+                </tr>
+              </thead>
+              <tbody id="projection-tbody"></tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3" style="font-weight:700">Projected Overall Score</td>
+                  <td id="projection-total" style="font-weight:800; font-size:1.1rem; color:var(--accent-secondary)">--</td>
+                  <td style="font-size:0.8rem; color:var(--text-muted)">Sum of (Raw Score × Weight) for all 10 metrics</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div class="projection-formula-box" id="projection-formula"></div>
+        </div>
+      </div>
+
+      <!-- 10-Metric Score Breakdown -->
+      <div style="padding:0 40px 24px" id="metrics-section">
+        <h2 class="section-heading">📊 10-Metric Score Breakdown</h2>
+        <div class="scores-grid" id="scores-grid"></div>
+      </div>
+
+      <!-- Charts -->
+      <div style="padding:0 40px 24px" id="charts-section">
+        <div class="charts-row">
+          <div class="chart-card">
+            <div class="chart-card-title">Skill Radar Chart</div>
+            <div style="height:320px; position:relative">
+              <canvas id="radar-chart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Score Breakdown</div>
+            <div style="height:320px; position:relative">
+              <canvas id="bar-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Full AI Feedback & Action Plan Container -->
+      <div id="plan-section">
+        <!-- Full AI Feedback -->
+        <div style="padding:0 40px 24px">
+          <h2 class="section-heading">🤖 AI Feedback</h2>
+          <div class="full-feedback-card">
+            <div class="full-feedback-text" id="full-feedback"></div>
+          </div>
+        </div>
+
+        <!-- Strengths / Weaknesses / Recommendations Grid -->
+        <div style="padding:0 40px 24px">
+          <div class="feedback-grid" id="feedback-grid"></div>
+        </div>
+
+        <!-- Evidence Section -->
+        <div style="padding:0 40px 24px" id="evidence-section" style="display:none">
+          <div class="feedback-card evidence-card" id="evidence-card">
+            <div class="feedback-card-title">🔍 Evidence & Scoring Rationale</div>
+            <ul class="feedback-list" id="evidence-list"></ul>
+          </div>
+        </div>
+
+        <!-- Improvement Suggestions -->
+        <div style="padding:0 40px 24px" id="improvement-section" style="display:none">
+          <div class="feedback-card improvement-card" id="improvement-card">
+            <div class="feedback-card-title">🎯 Targeted Improvement Suggestions</div>
+            <ul class="feedback-list" id="improvement-list"></ul>
+          </div>
+        </div>
+
+        <!-- Practice Plan -->
+        <div style="padding:0 40px 24px" id="practice-plan-section" style="display:none">
+          <div class="feedback-card practice-plan-card" id="practice-plan-card">
+            <div class="feedback-card-title">📋 Personalized Practice Plan</div>
+            <ol class="practice-plan-list" id="practice-plan-list"></ol>
+          </div>
+        </div>
+      </div>
+
+      <!-- Transcript -->
+      <div style="padding:0 40px 24px" id="transcript-section">
+        <div class="transcript-toggle" id="transcript-toggle" onclick="toggleTranscript()">
+          <span style="font-weight:700">📝 View Full Transcript</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="transcript-content" id="transcript-content">
+          <div style="padding:16px; background:rgba(255,255,255,0.02); border-radius:0 0 var(--radius-lg) var(--radius-lg); border:1px solid var(--glass-border); border-top:none" id="transcript-list"></div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="padding:0 40px 48px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap">
+        <a href="/select-mode.html" class="btn btn-primary btn-lg">🔄 Practice Again</a>
+        <a href="/performance.html" class="btn btn-secondary btn-lg">📊 View Progress</a>
+        <a href="/history.html" class="btn btn-secondary btn-lg">📋 GD History</a>
+        <a href="/dashboard.html" class="btn btn-secondary btn-lg">🏠 Dashboard</a>
+      </div>
+
+    </div><!-- /results-content -->
+
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  AppUtils.requireAuth();
+  const user = AppUtils.getUser();
+  if (user) {
+    document.getElementById('sidebar-name').textContent = user.name;
+    document.getElementById('sidebar-email').textContent = user.email;
+    document.getElementById('sidebar-avatar').textContent = user.name.charAt(0).toUpperCase();
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  let sessionId = params.get('session') || params.get('session_id') || params.get('id');
+  const roomId = params.get('roomId') || params.get('room');
+  let resultsRetryCount = 0;
+
+  function formatTime(seconds) {
+    if (!seconds || seconds <= 0) return '0s';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s > 0 ? s + 's' : ''}` : `${s}s`;
+  }
+
+  // ── 10-Metric Definition ──────────────────────────────────────────────────
+  const METRIC_DEFS = [
+    { label: 'Content Quality',    icon: '💡', key: 'content_score',        color: '#10b981', weight: '15%', desc: 'Depth of ideas & real-world examples' },
+    { label: 'Communication',      icon: '🗣️', key: 'communication_score',  color: '#6c63ff', weight: '15%', desc: 'Clarity, fluency & vocabulary' },
+    { label: 'Participation',      icon: '🙋', key: 'participation_score',  color: '#f59e0b', weight: '10%', desc: 'Active speaking turns & volume' },
+    { label: 'Relevance',          icon: '🎯', key: 'relevance_score',      color: '#3b82f6', weight: '10%', desc: 'Staying focused on topic' },
+    { label: 'Listening & Response', icon: '👂', key: 'listening_score',     color: '#14b8a6', weight: '10%', desc: 'Building on peer contributions' },
+    { label: 'Teamwork',           icon: '🤝', key: 'teamwork_score',       color: '#ef4444', weight: '10%', desc: 'Encouraging collaborative discussion' },
+    { label: 'Leadership',         icon: '👑', key: 'leadership_score',     color: '#9c27b0', weight: '10%', desc: 'Guiding discussion flow' },
+    { label: 'Critical Thinking',  icon: '🧠', key: 'critical_thinking',    color: '#0ea5e9', weight: '10%', desc: 'Logical reasoning & analysis' },
+    { label: 'Confidence',         icon: '💪', key: 'confidence_score',     color: '#ec4899', weight: '5%',  desc: 'Professional tone & poise' },
+    { label: 'Conclusion',         icon: '📌', key: 'conclusion_score',     color: '#a78bfa', weight: '5%',  desc: 'Summarizing key discussion points' },
+  ];
+
+  function renderHostScoreboard(roomRes) {
+    const sec = document.getElementById('host-summary-section');
+    if (!sec) return;
+    sec.style.display = 'block';
+
+    const meta = document.getElementById('host-gd-meta');
+    if (meta && roomRes.room) {
+      const dur = roomRes.room.duration ? formatTime(roomRes.room.duration) : 'Standard';
+      meta.textContent = `Topic: "${roomRes.room.topic || 'Group Discussion'}" · Duration: ${dur} · ${(roomRes.participants || []).length} Participant(s)`;
+    }
+
+    const table = document.getElementById('host-participants-table');
+    if (table && roomRes.participants) {
+      table.innerHTML = roomRes.participants.map(p => {
+        const score = Math.round(p.overall_score || 0);
+        const color = AppUtils.getScoreColor(score);
+        const isCurrent = p.session_id && String(p.session_id) === String(sessionId);
+
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:${isCurrent ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${isCurrent ? 'rgba(52,211,153,0.45)' : 'rgba(255,255,255,0.08)'}; border-radius:12px; transition:all 0.2s; cursor:pointer"
+               onclick="switchParticipantReport('${p.session_id}')"
+               title="Click to view detailed report for ${p.name}">
+            <div style="display:flex; align-items:center; gap:12px">
+              <div style="width:38px; height:38px; border-radius:50%; background:${color}20; color:${color}; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1rem; border:1.5px solid ${color}">
+                ${(p.name || 'P').charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div style="font-weight:700; font-size:0.92rem; color:var(--text-primary); display:flex; align-items:center; gap:6px">
+                  ${p.name}
+                  ${p.role === 'host' ? '<span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; font-size:0.65rem">Host</span>' : ''}
+                  ${isCurrent ? '<span style="font-size:0.75rem; color:#34d399; font-weight:700">● Currently Viewing</span>' : ''}
+                </div>
+                <div style="font-size:0.75rem; color:var(--text-muted)">
+                  ${p.speaking_turns || 0} speaking turn(s) · ${p.total_words || 0} words
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:12px">
+              <span style="font-family:var(--font-display); font-weight:900; font-size:1.35rem; color:${color}">
+                ${score} <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400">/ 100</span>
+              </span>
+              <button class="btn btn-secondary btn-sm" style="font-size:0.75rem; padding:6px 12px">
+                ${isCurrent ? 'Viewing' : 'Inspect Report →'}
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  function switchParticipantReport(newSessionId) {
+    if (!newSessionId || newSessionId === 'undefined' || newSessionId === 'null') {
+      AppUtils.showToast('No detailed session evaluation recorded for this participant yet.', 'info');
+      return;
+    }
+    sessionId = newSessionId;
+    loadResults();
+  }
+
+  async function loadResults() {
+    let roomRes = null;
+    // If in Human room mode, fetch room scoreboard
+    if (roomId) {
+      try {
+        roomRes = await API.Rooms.getResults(roomId);
+        if (roomRes && roomRes.isHost) {
+          renderHostScoreboard(roomRes);
+        }
+        // Auto-select first participant session if not in query params
+        if (!sessionId && roomRes && roomRes.participants && roomRes.participants.length > 0) {
+          const firstWithSession = roomRes.participants.find(p => p.session_id);
+          if (firstWithSession) {
+            sessionId = firstWithSession.session_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch room summary:', err);
+      }
+    }
+
+    if (!sessionId) {
+      if (roomRes && roomRes.isHost) {
+        // Host has room scoreboard, reveal content
+        document.getElementById('loading-state').style.display = 'none';
+        document.getElementById('results-content').style.display = 'block';
+        return;
+      }
+      window.location.href = '/history.html';
+      return;
+    }
+
+    try {
+      const data = await API.Performance.getSession(sessionId);
+      if (!data || !data.performance) {
+        throw new Error('Evaluation record not ready yet.');
+      }
+      const { performance: perf, transcript } = data;
+
+      // Parse JSON strings if needed
+      const parseJsonField = (val) => {
+        if (Array.isArray(val)) return val;
+        if (typeof val === 'string') { try { return JSON.parse(val); } catch { return []; } }
+        return [];
+      };
+      const strengths       = parseJsonField(perf.strengths);
+      const improvements    = parseJsonField(perf.improvements);
+      const recommendations = parseJsonField(perf.recommendations);
+      const evidence        = parseJsonField(perf.evidence);
+      const practicePlan    = parseJsonField(perf.practice_plan);
+      const improveSugs     = parseJsonField(perf.improvement_suggestions);
+
+      // Show results
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('results-content').style.display = 'block';
+
+      // ── Score ring animation ──────────────────────────────────────────
+      const score = Math.round(perf.overall_score || 0);
+      const circumference = 490;
+      const offset = circumference - (score / 100) * circumference;
+
+      setTimeout(() => {
+        document.getElementById('score-circle').style.strokeDashoffset = offset;
+        animateCounter('overall-score-display', score, 2000);
+      }, 300);
+
+      // Grade
+      const { grade, cls } = AppUtils.getScoreGrade(score);
+      const gradeBadge = document.getElementById('score-grade-badge');
+      gradeBadge.textContent = grade;
+      gradeBadge.className = `score-grade ${cls}`;
+
+      // Topic & meta
+      document.getElementById('results-topic').textContent = `"${perf.topic}"`;
+      document.getElementById('results-meta').textContent = `${perf.mode === 'ai' ? '🤖 AI Mode' : '👥 Human Mode'} · ${perf.category || 'General'} · ${AppUtils.formatDate(perf.created_at)} · ${perf.speaking_turns || 0} turns · ${perf.total_words || 0} words`;
+
+      // ── Placement Readiness ───────────────────────────────────────────
+      if (perf.placement_readiness) {
+        const pb = document.getElementById('placement-badge');
+        pb.style.display = 'flex';
+        document.getElementById('placement-text').textContent = perf.placement_readiness;
+        // Choose icon based on score
+        const pIcon = score >= 90 ? '🌟' : score >= 80 ? '✅' : score >= 70 ? '💪' : score >= 60 ? '📈' : '🔄';
+        document.getElementById('placement-icon').textContent = pIcon;
+      }
+
+      // ── Executive Summary Populator ──────────────────────────────────
+      const topStrengthItem = METRIC_DEFS.reduce((max, item) => (perf[item.key] || 0) > (perf[max.key] || 0) ? item : max, METRIC_DEFS[0]);
+      const topFocusItem = METRIC_DEFS.reduce((min, item) => (perf[item.key] || 0) < (perf[min.key] || 0) ? item : min, METRIC_DEFS[0]);
+
+      document.getElementById('exec-strength').textContent = `${topStrengthItem.label} (${Math.round(perf[topStrengthItem.key] || 0)}%) — ${strengths[0] || topStrengthItem.desc}`;
+      document.getElementById('exec-focus').textContent = `${topFocusItem.label} (${Math.round(perf[topFocusItem.key] || 0)}%) — ${improvements[0] || topFocusItem.desc}`;
+      document.getElementById('exec-action').textContent = recommendations[0] || (practicePlan[0] ? practicePlan[0] : 'Aim for 4+ active turns and acknowledge peer points.');
+
+      // ── Behavioral Stats Panel ────────────────────────────────────────
+      const behavioralStats = [
+        { icon: '⏱️', value: formatTime(perf.speaking_time_seconds || 0), label: 'Speaking Time' },
+        { icon: '💬', value: perf.speaking_turns || 0, label: 'Speaking Turns' },
+        { icon: '📝', value: perf.total_words || 0, label: 'Total Words' },
+        { icon: '✨', value: perf.meaningful_contributions || 0, label: 'Key Contributions' },
+        { icon: '↩️', value: perf.responses_to_others || 0, label: 'Responses to Others' },
+        { icon: '❓', value: perf.questions_asked || 0, label: 'Questions Asked' },
+        { icon: '🔄', value: perf.repeated_points || 0, label: 'Repeated Points' },
+        { icon: '🚧', value: perf.topic_deviations || 0, label: 'Topic Deviations' },
+      ];
+
+      document.getElementById('behavioral-grid').innerHTML = behavioralStats.map(s => `
+        <div class="behavioral-stat">
+          <div class="behavioral-stat-icon">${s.icon}</div>
+          <div class="behavioral-stat-value">${s.value}</div>
+          <div class="behavioral-stat-label">${s.label}</div>
+        </div>
+      `).join('');
+
+      // ── Score Projection Details ──────────────────────────────────────
+      let scoreProj = perf.score_projection;
+      if (typeof scoreProj === 'string') {
+        try { scoreProj = JSON.parse(scoreProj); } catch { scoreProj = null; }
+      }
+
+      if (scoreProj && scoreProj.items && scoreProj.items.length > 0) {
+        document.getElementById('projection-level').textContent = scoreProj.activity_level || 'Active Discussion Evaluation';
+        document.getElementById('projection-summary').textContent = scoreProj.activity_metrics_summary || 'Weighted projection formula based on user speech activity.';
+        document.getElementById('projection-formula').textContent = `📐 ${scoreProj.formula}`;
+
+        document.getElementById('projection-tbody').innerHTML = scoreProj.items.map(item => `
+          <tr>
+            <td>
+              <div style="display:flex; align-items:center; gap:8px">
+                <span>${item.icon || '📊'}</span>
+                <span style="font-weight:600; color:var(--text-primary)">${item.metric}</span>
+              </div>
+            </td>
+            <td><span class="badge" style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:4px; font-size:0.78rem">${item.weight}</span></td>
+            <td><span style="font-weight:700; color:${AppUtils.getScoreColor(item.score)}">${item.score}/100</span></td>
+            <td><span style="font-weight:700; color:var(--accent-secondary)">+${item.weighted_points} pts</span></td>
+            <td style="font-size:0.82rem; color:var(--text-muted)">${item.rationale}</td>
+          </tr>
+        `).join('');
+
+        document.getElementById('projection-total').textContent = `${scoreProj.total_projected_score || score}/100`;
+      } else {
+        // Fallback calculation projection display
+        document.getElementById('projection-level').textContent = 'Weighted Projection Breakdown';
+        document.getElementById('projection-summary').textContent = `Based on ${perf.speaking_turns || 0} active speaking turn(s) and ${perf.total_words || 0} total word(s) spoken.`;
+        document.getElementById('projection-formula').textContent = '📐 Overall Score = (Content×15%) + (Comm×15%) + (Participation×10%) + (Relevance×10%) + (Listening×10%) + (Teamwork×10%) + (Leadership×10%) + (CritThinking×10%) + (Confidence×5%) + (Conclusion×5%)';
+
+        document.getElementById('projection-tbody').innerHTML = METRIC_DEFS.map(item => {
+          const raw = Math.round(perf[item.key] || 0);
+          const wNum = parseFloat(item.weight) / 100;
+          const weightedPts = (raw * wNum).toFixed(2);
+          return `
+            <tr>
+              <td>
+                <div style="display:flex; align-items:center; gap:8px">
+                  <span>${item.icon}</span>
+                  <span style="font-weight:600; color:var(--text-primary)">${item.label}</span>
+                </div>
+              </td>
+              <td><span class="badge" style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:4px; font-size:0.78rem">${item.weight}</span></td>
+              <td><span style="font-weight:700; color:${AppUtils.getScoreColor(raw)}">${raw}/100</span></td>
+              <td><span style="font-weight:700; color:var(--accent-secondary)">+${weightedPts} pts</span></td>
+              <td style="font-size:0.82rem; color:var(--text-muted)">Evaluated from user transcript activity.</td>
+            </tr>
+          `;
+        }).join('');
+
+        document.getElementById('projection-total').textContent = `${score}/100`;
+      }
+
+      // ── 10-Metric Score Breakdown ──────────────────────────────────────
+      document.getElementById('scores-grid').innerHTML = METRIC_DEFS.map(item => {
+        const val = Math.round(perf[item.key] || 0);
+        return `
+          <div class="score-item">
+            <div class="score-item-icon" style="background:${item.color}20; color:${item.color}">${item.icon}</div>
+            <div class="score-item-info">
+              <div class="score-item-label">${item.label}</div>
+              <div class="score-item-desc">${item.desc}</div>
+              <div class="score-item-weight">Weight: ${item.weight}</div>
+              <div class="progress-bar" style="margin-top:2px">
+                <div class="progress-fill" style="width:0%; background:${item.color}" data-width="${val}%"></div>
+              </div>
+            </div>
+            <div class="score-item-pct" style="color:${AppUtils.getScoreColor(val)}">${val}%</div>
+          </div>
+        `;
+      }).join('');
+
+      // Animate progress bars
+      setTimeout(() => {
+        document.querySelectorAll('.progress-fill[data-width]').forEach(el => {
+          el.style.width = el.getAttribute('data-width');
+        });
+      }, 500);
+
+      // ── Charts ─────────────────────────────────────────────────────────
+      const chartData = METRIC_DEFS.map(i => ({
+        label: i.label, value: Math.round(perf[i.key] || 0), color: i.color
+      }));
+      renderRadarChart(chartData);
+      renderBarChart(chartData);
+
+      // ── Full Feedback ──────────────────────────────────────────────────
+      document.getElementById('full-feedback').textContent = perf.full_feedback || 'No detailed feedback available.';
+
+      // ── Strengths / Weaknesses / Recommendations ───────────────────────
+      document.getElementById('feedback-grid').innerHTML = `
+        <div class="feedback-card strengths-card">
+          <div class="feedback-card-title">✅ Strengths</div>
+          <ul class="feedback-list">
+            ${(strengths || []).map(s => `<li>${s}</li>`).join('') || '<li>Complete a GD session to see your strengths</li>'}
+          </ul>
+        </div>
+        <div class="feedback-card improvements-card">
+          <div class="feedback-card-title">⚠️ Areas for Improvement</div>
+          <ul class="feedback-list">
+            ${(improvements || []).map(s => `<li>${s}</li>`).join('') || '<li>Keep practicing to identify improvement areas</li>'}
+          </ul>
+        </div>
+        <div class="feedback-card recommendations-card">
+          <div class="feedback-card-title">🎯 Recommendations</div>
+          <ul class="feedback-list">
+            ${(recommendations || []).map(s => `<li>${s}</li>`).join('') || '<li>Practice regularly to get personalized recommendations</li>'}
+          </ul>
+        </div>
+      `;
+
+      // ── Evidence ───────────────────────────────────────────────────────
+      if (evidence && evidence.length > 0) {
+        document.getElementById('evidence-section').style.display = 'block';
+        document.getElementById('evidence-list').innerHTML =
+          evidence.map(e => `<li>${e}</li>`).join('');
+      }
+
+      // ── Improvement Suggestions ────────────────────────────────────────
+      if (improveSugs && improveSugs.length > 0) {
+        document.getElementById('improvement-section').style.display = 'block';
+        document.getElementById('improvement-list').innerHTML =
+          improveSugs.map(s => `<li>${s}</li>`).join('');
+      }
+
+      // ── Practice Plan ──────────────────────────────────────────────────
+      if (practicePlan && practicePlan.length > 0) {
+        document.getElementById('practice-plan-section').style.display = 'block';
+        document.getElementById('practice-plan-list').innerHTML =
+          practicePlan.map(p => `<li>${p}</li>`).join('');
+      }
+
+      // ── Transcript ─────────────────────────────────────────────────────
+      if (transcript && transcript.length > 0) {
+        const colors = { user: '#10b981', ai: '#a78bfa', system: '#475569' };
+        document.getElementById('transcript-list').innerHTML = transcript.map(t => `
+          <div class="transcript-entry">
+            <div class="transcript-speaker" style="color:${colors[t.speaker_type] || '#a78bfa'}">${t.speaker}</div>
+            <div class="transcript-message">${t.message}</div>
+          </div>
+        `).join('');
+      }
+
+    } catch (err) {
+      console.error('Results load error:', err);
+      document.getElementById('loading-state').innerHTML = `
+        <div style="text-align:center; color:var(--text-muted); padding:40px">
+          <div style="font-size:2rem; margin-bottom:12px">⚠️</div>
+          <div style="font-size:1rem; color:var(--text-primary); margin-bottom:8px">Could not load results</div>
+          <div style="font-size:0.85rem; margin-bottom:20px">${err.message}</div>
+          <a href="/history.html" class="btn btn-secondary">View History</a>
+        </div>
+      `;
+    }
+  }
+
+  function formatTime(seconds) {
+    if (!seconds || seconds < 0) return '0s';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function renderRadarChart(data) {
+    const ctx = document.getElementById('radar-chart');
+    new Chart(ctx, {
+      type: 'radar',
+      data: {
+        labels: data.map(d => d.label),
+        datasets: [{
+          label: 'Your Score',
+          data: data.map(d => d.value),
+          borderColor: '#6c63ff',
+          backgroundColor: 'rgba(108,99,255,0.12)',
+          pointBackgroundColor: data.map(d => d.color),
+          pointBorderColor: data.map(d => d.color),
+          pointRadius: 4,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          r: {
+            min: 0, max: 100,
+            grid: { color: 'rgba(255,255,255,0.06)' },
+            angleLines: { color: 'rgba(255,255,255,0.06)' },
+            ticks: { color: '#94a3b8', stepSize: 25, backdropColor: 'transparent' },
+            pointLabels: { color: '#94a3b8', font: { size: 9 } }
+          }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  function renderBarChart(data) {
+    const ctx = document.getElementById('bar-chart');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.map(d => d.label),
+        datasets: [{
+          data: data.map(d => d.value),
+          backgroundColor: data.map(d => d.color + '80'),
+          borderColor: data.map(d => d.color),
+          borderWidth: 1,
+          borderRadius: 6
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+          x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 8 }, maxRotation: 45 } }
+        }
+      }
+    });
+  }
+
+  function animateCounter(id, target, duration) {
+    const el = document.getElementById(id);
+    const start = Date.now();
+    const update = () => {
+      const elapsed = Date.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      el.textContent = Math.round(eased * target);
+      if (progress < 1) requestAnimationFrame(update);
+    };
+    requestAnimationFrame(update);
+  }
+
+  function toggleTranscript() {
+    const toggle = document.getElementById('transcript-toggle');
+    const content = document.getElementById('transcript-content');
+    toggle.classList.toggle('open');
+    content.classList.toggle('open');
+  }
+
+  function switchResultTab(tab, btn) {
+    document.querySelectorAll('.results-tab').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    const sections = {
+      summary: ['summary-section', 'behavioral-section'],
+      projection: ['projection-section'],
+      metrics: ['metrics-section', 'charts-section'],
+      plan: ['plan-section'],
+      transcript: ['transcript-section']
+    };
+
+    const allSections = ['summary-section', 'behavioral-section', 'projection-section', 'metrics-section', 'charts-section', 'plan-section', 'transcript-section'];
+
+    if (tab === 'all') {
+      allSections.forEach(sId => {
+        const el = document.getElementById(sId);
+        if (el) el.style.display = 'block';
+      });
+    } else {
+      allSections.forEach(sId => {
+        const el = document.getElementById(sId);
+        if (el) el.style.display = 'none';
+      });
+      (sections[tab] || []).forEach(sId => {
+        const el = document.getElementById(sId);
+        if (el) el.style.display = 'block';
+      });
+    }
+  }
+
+  loadResults();
+</script>
+</body>
+</html>

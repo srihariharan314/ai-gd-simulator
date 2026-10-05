@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Select Topic — GD Simulator</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    .categories-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .category-chip {
+      padding: 8px 16px;
+      border-radius: var(--radius-full);
+      border: 1px solid var(--glass-border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+    }
+
+    .category-chip:hover, .category-chip.active {
+      background: rgba(108,99,255,0.15);
+      border-color: rgba(108,99,255,0.4);
+      color: var(--accent-secondary);
+    }
+
+    .topics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    .topic-card {
+      padding: 18px 20px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.04);
+      border: 2px solid var(--glass-border);
+      cursor: pointer;
+      transition: all var(--transition-normal);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .topic-card:hover {
+      background: rgba(108,99,255,0.08);
+      border-color: rgba(108,99,255,0.35);
+      transform: translateY(-2px);
+    }
+
+    .topic-card.selected {
+      background: rgba(108,99,255,0.15);
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 20px rgba(108,99,255,0.2);
+    }
+
+    .topic-num {
+      width: 28px; height: 28px;
+      border-radius: var(--radius-sm);
+      background: rgba(108,99,255,0.15);
+      color: var(--accent-secondary);
+      font-size: 0.8rem;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .topic-text {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+
+    .custom-topic-area {
+      padding: 20px;
+      border-radius: var(--radius-lg);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--glass-border);
+      margin-bottom: 24px;
+    }
+
+    .selected-topic-banner {
+      padding: 16px 20px;
+      border-radius: var(--radius-lg);
+      background: rgba(108,99,255,0.12);
+      border: 1px solid rgba(108,99,255,0.3);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .action-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .loading-topics {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🎤</div>
+      <div class="sidebar-logo-text">GD Simulator <span>AI Practice Platform</span></div>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/dashboard.html" class="nav-item"><span class="icon">🏠</span> Dashboard</a>
+      <a href="/select-mode.html" class="nav-item"><span class="icon">▶️</span> Start GD</a>
+      <a href="/performance.html" class="nav-item"><span class="icon">📊</span> Performance</a>
+      <a href="/history.html" class="nav-item"><span class="icon">📋</span> GD History</a>
+      <a href="/profile.html" class="nav-item"><span class="icon">👤</span> Profile</a>
+      <a href="#" class="nav-item" onclick="API.Auth.logout()"><span class="icon">🚪</span> Logout</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="sidebar-name">Loading...</div>
+          <div class="email" id="sidebar-email">--</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px">
+      <div>
+        <a href="/select-mode.html" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px; margin-bottom:10px">
+          ← Back to Mode Selection
+        </a>
+        <div class="page-title">Select GD Topic</div>
+        <div class="page-subtitle" id="mode-label">Loading...</div>
+      </div>
+      <a href="/dashboard.html" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px">
+        🏠 Dashboard
+      </a>
+    </div>
+
+    <div class="page-content" style="padding-bottom: 90px">
+      <!-- 4-Step Practice Workflow Indicator -->
+      <div class="workflow-stepper">
+        <div class="step-item"><div class="step-number">1</div> Select Mode</div>
+        <div class="step-divider"></div>
+        <div class="step-item active"><div class="step-number">2</div> Choose Topic</div>
+        <div class="step-divider"></div>
+        <div class="step-item"><div class="step-number">3</div> GD Room</div>
+        <div class="step-divider"></div>
+        <div class="step-item"><div class="step-number">4</div> Analysis</div>
+      </div>
+
+      <!-- Selected topic banner -->
+      <div class="selected-topic-banner" id="selected-banner" style="display:none">
+        <span style="font-size:1.4rem">✅</span>
+        <div style="flex:1">
+          <div style="font-size:0.75rem; color:var(--accent-secondary); font-weight:600; text-transform:uppercase;">Selected Topic</div>
+          <div style="font-weight:600; color:var(--text-primary); margin-top:2px" id="selected-topic-text"></div>
+        </div>
+        <button class="btn btn-primary" onclick="proceedToInstructions()" id="proceed-btn">
+          Continue to Instructions →
+        </button>
+      </div>
+
+      <!-- Category chips -->
+      <div class="categories-row" id="categories-row">
+        <button class="category-chip active" onclick="loadTopics('Technology', this)">💻 Technology</button>
+        <button class="category-chip" onclick="loadTopics('Artificial Intelligence', this)">🤖 AI & Tech</button>
+        <button class="category-chip" onclick="loadTopics('Education', this)">📚 Education</button>
+        <button class="category-chip" onclick="loadTopics('Business', this)">💼 Business</button>
+        <button class="category-chip" onclick="loadTopics('Current Affairs', this)">📰 Current Affairs</button>
+        <button class="category-chip" onclick="loadTopics('Social Issues', this)">🌍 Social Issues</button>
+        <button class="category-chip" onclick="loadTopics('Environment', this)">🌿 Environment</button>
+        <button class="category-chip" onclick="loadTopics('Career', this)">🎯 Career</button>
+        <button class="category-chip" onclick="loadTopics('General', this)">💬 General</button>
+      </div>
+
+      <!-- Generate AI topics -->
+      <div class="action-row mb-16" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px">
+        <div style="display:flex; align-items:center; gap:12px">
+          <button class="btn btn-secondary" id="generate-btn" onclick="generateAITopics()">
+            🎲 Generate AI Topics
+          </button>
+          <span style="font-size:0.82rem; color:var(--text-muted)">or pick any topic below</span>
+        </div>
+      </div>
+
+      <!-- Topics Grid -->
+      <div class="topics-grid" id="topics-grid">
+        <div class="loading-topics">
+          <div class="spinner" style="margin:0 auto 12px"></div>
+          Loading topics...
+        </div>
+      </div>
+
+      <!-- Custom Topic -->
+      <div class="custom-topic-area" style="margin-top:24px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Or Enter Your Own Custom Topic</label>
+          <div style="display:flex; gap:10px">
+            <input id="custom-topic" class="form-input" type="text"
+              placeholder="Type your own GD topic and press Enter..." 
+              onkeydown="if(event.key==='Enter'){selectCustomTopic();}" />
+            <button class="btn btn-secondary" onclick="selectCustomTopic()" style="white-space:nowrap">
+              Use This Topic
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Sticky Action Bar when topic is selected -->
+      <div id="sticky-action-bar" style="display:none; position:fixed; bottom:20px; left:50%; transform:translateX(-50%); width:calc(100% - 320px); max-width:860px; background:rgba(18,24,38,0.95); border:1px solid rgba(108,99,255,0.4); border-radius:16px; padding:14px 24px; box-shadow:0 12px 40px rgba(0,0,0,0.6); backdrop-filter:blur(16px); z-index:100; align-items:center; justify-content:space-between; gap:16px">
+        <div style="flex:1; min-width:0">
+          <div style="font-size:0.7rem; color:var(--accent-secondary); font-weight:700; text-transform:uppercase; letter-spacing:0.05em">Ready to proceed</div>
+          <div id="sticky-topic-text" style="font-weight:600; color:#fff; font-size:0.92rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"></div>
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="proceedToInstructions()" id="sticky-proceed-btn" style="box-shadow:0 0 20px rgba(108,99,255,0.4); flex-shrink:0">
+          Continue to Instructions →
+        </button>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  AppUtils.requireAuth();
+  const user = AppUtils.getUser();
+  if (user) {
+    document.getElementById('sidebar-name').textContent = user.name;
+    document.getElementById('sidebar-email').textContent = user.email;
+    document.getElementById('sidebar-avatar').textContent = user.name.charAt(0).toUpperCase();
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('mode') || localStorage.getItem('gd_selected_mode') || 'ai';
+  const aiCount = params.get('aiCount') || localStorage.getItem('gd_ai_participants') || '4';
+  if (mode === 'ai') localStorage.setItem('gd_ai_participants', aiCount);
+  document.getElementById('mode-label').textContent = mode === 'ai' ? `🤖 AI Mode • ${aiCount} AI Participants` : '👥 Human Mode';
+
+  let selectedTopic = '';
+  let currentCategory = 'Technology';
+
+  // Static fallback topics per category
+  const FALLBACK_TOPICS = {
+    'Technology': [
+      'Is social media doing more harm than good?',
+      'Should coding be a mandatory subject in schools?',
+      'Will 5G technology transform India\'s digital economy?',
+      'Are smartphones making us less productive?',
+      'Should tech companies be regulated more strictly?',
+      'Is online education better than traditional classroom learning?'
+    ],
+    'Artificial Intelligence': [
+      'Will AI replace human jobs in the next decade?',
+      'Is artificial intelligence a threat or an opportunity?',
+      'Should AI be regulated by governments?',
+      'Can AI ever be truly creative?',
+      'Is AI widening the gap between rich and poor nations?',
+      'Should autonomous vehicles be allowed on Indian roads?'
+    ],
+    'Education': [
+      'Should the education system focus more on skills than marks?',
+      'Is online learning as effective as offline learning?',
+      'Should college degrees be mandatory for employment?',
+      'Is the Indian education system outdated?',
+      'Should mental health be part of school curriculum?',
+      'Are private schools better than government schools?'
+    ],
+    'Business': [
+      'Should startups be given more tax benefits in India?',
+      'Is work from home the future of employment?',
+      'Should India ban Chinese apps and products?',
+      'Are big corporations more harmful than helpful to society?',
+      'Should the minimum wage be significantly increased?',
+      'Is entrepreneurship better than a government job?'
+    ],
+    'Current Affairs': [
+      'Should India focus more on renewable energy?',
+      'Is the one-nation-one-election policy beneficial?',
+      'Should India have a uniform civil code?',
+      'Is cricket the only sport that gets attention in India?',
+      'Should reservation be based on economic status instead of caste?',
+      'Is India ready for a cashless economy?'
+    ],
+    'Social Issues': [
+      'Is gender equality still a distant goal in India?',
+      'Should capital punishment be abolished?',
+      'Is caste discrimination still prevalent in modern India?',
+      'Should voting be made mandatory in India?',
+      'Are reality TV shows having a negative impact on youth?',
+      'Is feminism misunderstood in India?'
+    ],
+    'Environment': [
+      'Should plastic be completely banned in India?',
+      'Is climate change the biggest threat to humanity?',
+      'Should India prioritize economic growth over environmental protection?',
+      'Is electric vehicle adoption the solution to pollution?',
+      'Should there be stricter laws against deforestation?',
+      'Is zero-waste lifestyle achievable for middle-class families?'
+    ],
+    'Career': [
+      'Is a government job better than a private sector job in India?',
+      'Should freshers accept lower salaries to gain experience?',
+      'Is an MBA degree worth the investment?',
+      'Are internships more valuable than classroom education?',
+      'Should employees be loyal to one company their entire career?',
+      'Is networking more important than skill in career growth?'
+    ],
+    'General': [
+      'Is money the most important factor for happiness?',
+      'Should junk food be taxed more heavily?',
+      'Is social media causing an increase in mental health issues?',
+      'Should euthanasia be legalized in India?',
+      'Is globalization doing more harm than good?',
+      'Should the voting age be lowered to 16?'
+    ]
+  };
+
+  function loadTopics(category, btnElement) {
+    currentCategory = category;
+    document.querySelectorAll('.category-chip').forEach(c => c.classList.remove('active'));
+    if (btnElement) {
+      btnElement.classList.add('active');
+    } else {
+      const match = Array.from(document.querySelectorAll('.category-chip')).find(c => c.textContent.includes(category));
+      if (match) match.classList.add('active');
+    }
+
+    const topics = FALLBACK_TOPICS[category] || FALLBACK_TOPICS['General'];
+    renderTopics(topics);
+  }
+
+  async function generateAITopics() {
+    const btn = document.getElementById('generate-btn');
+    btn.innerHTML = '<span class="spinner"></span> Generating...';
+    btn.disabled = true;
+
+    try {
+      const data = await API.AI.generateTopics(currentCategory);
+      if (data.topics && data.topics.length > 0) {
+        renderTopics(data.topics);
+        AppUtils.showToast('AI topics generated! 🎲', 'success');
+      } else {
+        loadTopics(currentCategory);
+        AppUtils.showToast('Using cached topics', 'info');
+      }
+    } catch (err) {
+      AppUtils.showToast('Using curated topics for ' + currentCategory, 'info');
+      loadTopics(currentCategory);
+    } finally {
+      btn.innerHTML = '🎲 Generate AI Topics';
+      btn.disabled = false;
+    }
+  }
+
+  function renderTopics(topics) {
+    const grid = document.getElementById('topics-grid');
+    grid.innerHTML = topics.map((topic, i) => {
+      const isSel = selectedTopic === topic;
+      return `
+        <div class="topic-card ${isSel ? 'selected' : ''}"
+          onclick="selectTopic('${topic.replace(/'/g, "\\'")}', this)" id="topic-${i}" style="cursor:pointer">
+          <div class="topic-num">${i + 1}</div>
+          <div class="topic-text">${topic}</div>
+          ${isSel ? '<span style="color:#10b981; font-weight:700; margin-left:auto">✓ Selected</span>' : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  function selectTopic(topic, el) {
+    selectedTopic = topic;
+    document.querySelectorAll('.topic-card').forEach(c => {
+      c.classList.remove('selected');
+      const selSpan = c.querySelector('span');
+      if (selSpan && selSpan.textContent.includes('Selected')) selSpan.remove();
+    });
+
+    if (el) {
+      el.classList.add('selected');
+      if (!el.querySelector('span')) {
+        const tag = document.createElement('span');
+        tag.style.cssText = 'color:#10b981; font-weight:700; margin-left:auto; font-size:0.8rem';
+        tag.textContent = '✓ Selected';
+        el.appendChild(tag);
+      }
+    }
+
+    // Update Top Banner
+    const topBanner = document.getElementById('selected-banner');
+    if (topBanner) {
+      document.getElementById('selected-topic-text').textContent = topic;
+      topBanner.style.display = 'flex';
+    }
+
+    // Update Floating Bottom Bar
+    const stickyBar = document.getElementById('sticky-action-bar');
+    if (stickyBar) {
+      document.getElementById('sticky-topic-text').textContent = topic;
+      stickyBar.style.display = 'flex';
+    }
+
+    AppUtils.showToast('Topic selected: "' + topic.slice(0, 36) + '..."', 'info', 2000);
+  }
+
+  function selectCustomTopic() {
+    const val = document.getElementById('custom-topic').value.trim();
+    if (!val) { AppUtils.showToast('Please type a topic first', 'error'); return; }
+    selectTopic(val, null);
+  }
+
+  async function proceedToInstructions() {
+    if (!selectedTopic) { AppUtils.showToast('Please select a topic to continue', 'error'); return; }
+    
+    const btns = [document.getElementById('proceed-btn'), document.getElementById('sticky-proceed-btn')].filter(Boolean);
+    btns.forEach(b => { b.innerHTML = '<span class="spinner"></span> Creating session...'; b.disabled = true; });
+
+    try {
+      // Create session
+      const { session } = await API.Sessions.create(mode, selectedTopic, currentCategory);
+      localStorage.setItem('gd_current_session', JSON.stringify(session));
+      window.location.href = `/gd-instructions.html?session=${session.session_id}&mode=${mode}&topic=${encodeURIComponent(selectedTopic)}&category=${encodeURIComponent(currentCategory)}&aiCount=${aiCount}`;
+    } catch (err) {
+      AppUtils.showToast(err.message, 'error');
+      btns.forEach(b => { b.innerHTML = 'Continue to Instructions →'; b.disabled = false; });
+    }
+  }
+
+  // Load default topics
+  loadTopics('Technology');
+</script>
+</body>
+</html>

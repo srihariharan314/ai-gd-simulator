@@ -1,0 +1,832 @@
+/**
+ * human-room.js — Complete Human Group Discussion Room Lifecycle
+ * Handles: Waiting Lobby, Joining Countdown, Realtime Participant Sync,
+ * Server Authoritative Host Controls, Web Speech STT, Live Transcript,
+ * WhatsApp Invitation, and Post-GD Multi-Participant AI Evaluation.
+ */
+
+const HumanRoom = (() => {
+  let socket = null;
+  let roomId = null;
+  let roomCode = null;
+  let topic = '';
+  let category = 'General';
+  let userName = '';
+  let userId = null;
+  let userAvatar = '?';
+  let sessionId = null;
+  let isHost = false;
+  let roomStatus = 'WAITING_FOR_PARTICIPANTS'; // 'WAITING_FOR_PARTICIPANTS' | 'ACTIVE' | 'COMPLETED'
+  let participants = [];
+  let isMuted = false;
+  let isSpeaking = false;
+  let speechSilenceTimer = null;
+  let gdDuration = 300;
+  let joiningDuration = 120;
+  let topicContent = null;
+
+  // ─── INITIALIZATION ────────────────────────────────────────────────────────
+  async function init() {
+    if (!AppUtils.requireAuth()) return;
+
+    const user = AppUtils.getUser();
+    userName = user?.name || 'Participant';
+    userId = user?.user_id;
+    userAvatar = (userName.charAt(0) || 'P').toUpperCase();
+
+    // Parse URL parameters
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action'); // 'create', 'lobby', 'join'
+    const queryRoomId = params.get('roomId');
+    const queryRoomCode = params.get('roomCode') || params.get('room');
+    const queryTopic = params.get('topic');
+    sessionId = params.get('session');
+
+    const identifier = queryRoomCode || queryRoomId;
+
+    if (!identifier && action !== 'create') {
+      // Prompt user to enter room code or host a room
+      openJoinDialog();
+      return;
+    }
+
+    try {
+      // 1. Fetch room details and validate
+      let roomData = null;
+      if (identifier) {
+        const res = await API.Rooms.get(identifier);
+        roomData = res.room;
+        topicContent = res.topicContent;
+        isHost = res.isHost;
+      }
+
+      if (roomData) {
+        roomId = roomData.room_id;
+        roomCode = roomData.room_code;
+        topic = roomData.topic;
+        category = roomData.category || 'General';
+        roomStatus = roomData.status;
+        gdDuration = roomData.gd_duration || 300;
+        joiningDuration = roomData.joining_duration || 120;
+
+        // 2. Join the room on the backend (registers participant & session)
+        const joinRes = await API.Rooms.join(roomId);
+        if (joinRes && joinRes.session) {
+          sessionId = joinRes.session.session_id;
+          localStorage.setItem('gd_current_session', JSON.stringify(joinRes.session));
+        }
+        if (joinRes.isHost !== undefined) {
+          isHost = joinRes.isHost;
+        }
+        if (joinRes.participants) {
+          participants = joinRes.participants;
+        }
+      } else if (action === 'create') {
+        // Direct creation fallback
+        const createRes = await API.Rooms.create(
+          queryTopic || 'AI: Boon or Bane?',
+          'General',
+          120,
+          300,
+          6
+        );
+        roomId = createRes.room.room_id;
+        roomCode = createRes.room.room_code;
+        topic = createRes.room.topic;
+        sessionId = createRes.session?.session_id;
+        isHost = true;
+      }
+
+      // Update Header & DOM with room info
+      updateHeaderInfo();
+      renderTopicBriefing();
+
+      // Connect Socket.IO
+      connectSocket();
+      setupUIEventListeners();
+
+    } catch (err) {
+      console.error('Human room initialization error:', err);
+      AppUtils.showToast(err.message || 'Could not join room', 'error');
+      setTimeout(() => {
+        window.location.href = '/select-mode.html';
+      }, 2500);
+    }
+  }
+
+  // ─── SOCKET.IO CONNECTION & REAL-TIME EVENTS ──────────────────────────────
+  function connectSocket() {
+    socket = io(window.location.origin);
+
+    socket.on('connect', () => {
+      console.log('🔌 Connected to Human GD Socket server with ID:', socket.id);
+
+      if (isHost) {
+        socket.emit('room:create', {
+          roomId,
+          roomCode,
+          topic,
+          userName,
+          userId
+        });
+      } else {
+        socket.emit('room:join', {
+          roomId,
+          roomCode,
+          userName,
+          userId
+        });
+      }
+    });
+
+    socket.on('room:joined', (data) => {
+      roomId = data.roomId;
+      roomCode = data.roomCode || roomCode;
+      topic = data.topic || topic;
+      isHost = data.isHost !== undefined ? data.isHost : isHost;
+      roomStatus = data.status || roomStatus;
+
+      updateHeaderInfo();
+
+      if (data.participants) {
+        participants = data.participants;
+        renderParticipants();
+      }
+
+      if (roomStatus === 'ACTIVE') {
+        switchViewToActive();
+        if (data.gdTimerRemaining !== undefined) {
+          updateTimerDisplay(data.gdTimerRemaining, 'gd');
+        }
+      } else if (roomStatus === 'COMPLETED') {
+        switchViewToCompleted();
+      } else {
+        switchViewToLobby();
+        if (data.joiningTimerRemaining !== undefined) {
+          updateTimerDisplay(data.joiningTimerRemaining, 'joining');
+        }
+      }
+    });
+
+    socket.on('room:error', (data) => {
+      AppUtils.showToast(data.message || 'Room error', 'error');
+    });
+
+    socket.on('room:joining_timer', (data) => {
+      updateTimerDisplay(data.remaining, 'joining');
+    });
+
+    socket.on('room:started', (data) => {
+      roomStatus = 'ACTIVE';
+      AppUtils.showToast('🚀 Group Discussion has started! Good luck!', 'success', 3500);
+      switchViewToActive();
+      appendSystemMessage('🚀 Group Discussion is now ACTIVE. Participants may speak.');
+    });
+
+    socket.on('room:timer', (data) => {
+      updateTimerDisplay(data.remaining, 'gd');
+    });
+
+    socket.on('room:participant_joined', (data) => {
+      if (data.participants) {
+        participants = data.participants;
+        renderParticipants();
+      }
+      if (data.participant && data.participant.name !== userName) {
+        AppUtils.showToast(`👋 ${data.participant.name} joined the room`, 'info', 2500);
+      }
+    });
+
+    socket.on('room:participant_status', (data) => {
+      const p = participants.find(part => part.userId === data.userId || part.name === data.name);
+      if (p) {
+        p.isConnected = data.isConnected;
+        renderParticipants();
+      }
+    });
+
+    socket.on('room:participants_update', (updatedList) => {
+      if (Array.isArray(updatedList)) {
+        participants = updatedList;
+        renderParticipants();
+      }
+    });
+
+    socket.on('room:speaking_status', (data) => {
+      updateSpeakerVisuals(data.userId, data.userName, data.isSpeaking);
+    });
+
+    socket.on('room:message', (data) => {
+      appendChatMessage(data.userName, data.message, data.userId === userId || data.userName === userName, data.timestamp);
+    });
+
+    socket.on('room:host_status', (data) => {
+      const banner = document.getElementById('host-reconnecting-banner');
+      if (banner) {
+        banner.style.display = data.status === 'reconnecting' ? 'flex' : 'none';
+        banner.textContent = `⚠️ ${data.message}`;
+      }
+    });
+
+    socket.on('room:ended', (data) => {
+      roomStatus = 'COMPLETED';
+      Speech.stopListening();
+      switchViewToCompleted(data.message);
+    });
+
+    socket.on('room:evaluations_ready', (data) => {
+      console.log('✅ Post-GD evaluations are ready for room:', data.roomId);
+      setTimeout(() => {
+        navigateToResults();
+      }, 1500);
+    });
+
+    socket.on('disconnect', () => {
+      console.warn('Socket disconnected');
+      const badge = document.getElementById('connection-status-badge');
+      if (badge) {
+        badge.textContent = '🟡 Reconnecting...';
+        badge.className = 'badge badge-warning';
+      }
+    });
+  }
+
+  // ─── UI VIEW SWITCHING ────────────────────────────────────────────────────
+  function switchViewToLobby() {
+    const lobbySection = document.getElementById('lobby-section');
+    const activeSection = document.getElementById('active-discussion-section');
+    const completedSection = document.getElementById('completed-section');
+    const statusBadge = document.getElementById('status-badge');
+
+    if (lobbySection) lobbySection.style.display = 'block';
+    if (activeSection) activeSection.style.display = 'none';
+    if (completedSection) completedSection.style.display = 'none';
+
+    if (statusBadge) {
+      statusBadge.textContent = '🟡 WAITING LOBBY';
+      statusBadge.className = 'badge badge-warning';
+    }
+
+    // Toggle Host vs Participant Lobby view
+    const hostControls = document.getElementById('lobby-host-controls');
+    const participantNotice = document.getElementById('lobby-participant-notice');
+
+    if (hostControls) hostControls.style.display = isHost ? 'flex' : 'none';
+    if (participantNotice) participantNotice.style.display = isHost ? 'none' : 'block';
+  }
+
+  function switchViewToActive() {
+    const lobbySection = document.getElementById('lobby-section');
+    const activeSection = document.getElementById('active-discussion-section');
+    const completedSection = document.getElementById('completed-section');
+    const statusBadge = document.getElementById('status-badge');
+
+    if (lobbySection) lobbySection.style.display = 'none';
+    if (activeSection) activeSection.style.display = 'grid';
+    if (completedSection) completedSection.style.display = 'none';
+
+    if (statusBadge) {
+      statusBadge.textContent = '🔴 LIVE GD';
+      statusBadge.className = 'badge badge-danger';
+    }
+
+    // Host controls in active GD
+    const hostEndBtn = document.getElementById('btn-host-end-gd');
+    if (hostEndBtn) hostEndBtn.style.display = isHost ? 'inline-flex' : 'none';
+  }
+
+  function switchViewToCompleted(customMessage) {
+    const lobbySection = document.getElementById('lobby-section');
+    const activeSection = document.getElementById('active-discussion-section');
+    const completedSection = document.getElementById('completed-section');
+    const statusBadge = document.getElementById('status-badge');
+
+    if (lobbySection) lobbySection.style.display = 'none';
+    if (activeSection) activeSection.style.display = 'none';
+    if (completedSection) completedSection.style.display = 'flex';
+
+    if (statusBadge) {
+      statusBadge.textContent = '🏁 COMPLETED';
+      statusBadge.className = 'badge badge-success';
+    }
+
+    const msgEl = document.getElementById('completed-message');
+    if (msgEl && customMessage) msgEl.textContent = customMessage;
+
+    // Auto navigate after grace time if socket event hasn't already redirected
+    setTimeout(() => {
+      navigateToResults();
+    }, 4000);
+  }
+
+  function navigateToResults() {
+    if (sessionId) {
+      window.location.href = `/results.html?session=${sessionId}&roomId=${encodeURIComponent(roomId || '')}&isHost=${isHost ? '1' : '0'}`;
+    } else if (roomId) {
+      window.location.href = `/results.html?roomId=${encodeURIComponent(roomId)}&isHost=${isHost ? '1' : '0'}`;
+    } else {
+      window.location.href = `/history.html`;
+    }
+  }
+
+  // ─── DOM RENDERING HELPERS ─────────────────────────────────────────────────
+  function updateHeaderInfo() {
+    // Topic
+    const topicEl = document.getElementById('room-topic-text');
+    if (topicEl) topicEl.textContent = topic ? `"${topic}"` : 'Group Discussion';
+
+    // Room Code
+    const codeElements = ['room-id-display', 'lobby-code-display', 'modal-share-code'];
+    codeElements.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = roomCode || roomId || '——';
+    });
+
+    // Join Link
+    const directJoinUrl = `${window.location.origin}/gd/join/${encodeURIComponent(roomCode || roomId || '')}`;
+    const linkInputs = ['lobby-join-link-input', 'modal-share-link'];
+    linkInputs.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = directJoinUrl;
+    });
+  }
+
+  function updateTimerDisplay(remainingSeconds, timerType) {
+    const sec = Math.max(0, parseInt(remainingSeconds, 10) || 0);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+
+    if (timerType === 'joining') {
+      const lobbyTimer = document.getElementById('lobby-countdown-timer');
+      if (lobbyTimer) lobbyTimer.textContent = timeStr;
+
+      const headerTimer = document.getElementById('timer-display');
+      if (headerTimer) {
+        headerTimer.textContent = timeStr;
+        headerTimer.className = 'timer-display' + (sec <= 30 ? ' danger' : sec <= 60 ? ' warning' : '');
+      }
+
+      const timerLabel = document.getElementById('timer-label');
+      if (timerLabel) timerLabel.textContent = 'Joining closes in';
+
+    } else {
+      // Discussion Timer
+      const headerTimer = document.getElementById('timer-display');
+      if (headerTimer) {
+        headerTimer.textContent = timeStr;
+        headerTimer.className = 'timer-display' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
+      }
+
+      const activeTimer = document.getElementById('active-gd-timer');
+      if (activeTimer) {
+        activeTimer.textContent = timeStr;
+        activeTimer.className = 'active-gd-timer-badge' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
+      }
+
+      const timerLabel = document.getElementById('timer-label');
+      if (timerLabel) timerLabel.textContent = 'Discussion ends in';
+    }
+  }
+
+  function renderParticipants() {
+    // 1. Counter badge
+    const count = participants.length;
+    const countBadge = document.getElementById('participant-count');
+    if (countBadge) countBadge.textContent = count;
+
+    const lobbyCount = document.getElementById('lobby-participant-counter');
+    if (lobbyCount) lobbyCount.textContent = `${count} Joined`;
+
+    // 2. Waiting Lobby list
+    const lobbyList = document.getElementById('lobby-participants-list');
+    if (lobbyList) {
+      if (participants.length === 0) {
+        lobbyList.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:20px; font-size:0.85rem">Waiting for participants to join...</div>`;
+      } else {
+        lobbyList.innerHTML = participants.map(p => {
+          const isMe = p.name === userName || p.userId === userId;
+          const isParticipantHost = p.role === 'host' || p.userId === (isHost ? userId : null);
+          const isOnline = p.isConnected !== false;
+
+          return `
+            <div class="lobby-participant-card ${isMe ? 'is-self' : ''}">
+              <div class="avatar-ring ${isOnline ? 'online' : 'offline'}">
+                ${(p.name || 'P').charAt(0).toUpperCase()}
+              </div>
+              <div style="flex:1; min-width:0">
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                  <span style="font-weight:700; font-size:0.92rem; color:var(--text-primary)">${p.name}</span>
+                  ${isParticipantHost ? '<span class="role-badge host">Host</span>' : '<span class="role-badge participant">Participant</span>'}
+                  ${isMe ? '<span style="font-size:0.75rem; color:#34d399; font-weight:700">(You)</span>' : ''}
+                </div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px">
+                  ${isOnline ? '🟢 Connected' : '⏳ Reconnecting...'} · ${p.isMuted ? '🔇 Muted' : '🎤 Microphone Ready'}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    // 3. Active GD Participant Grid
+    const activeGrid = document.getElementById('active-participants-grid');
+    if (activeGrid) {
+      activeGrid.innerHTML = participants.map(p => {
+        const isMe = p.name === userName || p.userId === userId;
+        const isParticipantHost = p.role === 'host';
+        const isOnline = p.isConnected !== false;
+
+        return `
+          <div class="participant-tile ${p.isSpeaking ? 'speaking-pulse' : ''} ${isMe ? 'self-tile' : ''}" id="tile-user-${p.userId || p.name}">
+            <div class="tile-avatar-container">
+              <div class="tile-avatar" style="background: ${getAvatarColor(p.name)}25; color:${getAvatarColor(p.name)}">
+                ${(p.name || 'P').charAt(0).toUpperCase()}
+              </div>
+              <div class="speaker-wave-indicator ${p.isSpeaking ? 'visible' : ''}">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+            <div class="tile-name">
+              ${p.name} ${isMe ? '<span style="color:#34d399">(You)</span>' : ''}
+            </div>
+            <div class="tile-status-bar">
+              ${isParticipantHost ? '<span class="role-badge host" style="font-size:0.65rem">Host</span>' : ''}
+              <span class="mic-status-icon ${p.isMuted ? 'muted' : 'active'}" title="${p.isMuted ? 'Muted' : 'Microphone Ready'}">
+                ${p.isMuted ? '🔇' : '🎤'}
+              </span>
+              <span style="font-size:0.72rem; color:${p.isSpeaking ? '#34d399' : 'var(--text-muted)'}">
+                ${p.isSpeaking ? 'Speaking...' : isOnline ? 'Listening' : 'Offline'}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  function updateSpeakerVisuals(speakerUserId, speakerName, isSpeaking) {
+    // 1. Current Speaker Spotlight Banner
+    const speakerBanner = document.getElementById('current-speaker-spotlight');
+    if (speakerBanner) {
+      if (isSpeaking) {
+        speakerBanner.classList.add('active');
+        speakerBanner.innerHTML = `
+          <span class="pulse-mic">🎙️</span>
+          <span>CURRENT SPEAKER: <strong>${speakerName}</strong></span>
+          <div class="sound-wave"><span></span><span></span><span></span><span></span></div>
+        `;
+      } else {
+        speakerBanner.classList.remove('active');
+        speakerBanner.innerHTML = `
+          <span style="opacity:0.6">🎙️</span>
+          <span style="color:var(--text-muted)">Discussion in progress — click Speak or type to participate</span>
+        `;
+      }
+    }
+
+    // 2. Individual tile animation
+    participants.forEach(p => {
+      const match = (speakerUserId && p.userId === speakerUserId) || p.name === speakerName;
+      if (match) p.isSpeaking = !!isSpeaking;
+    });
+
+    document.querySelectorAll('.participant-tile').forEach(tile => {
+      tile.classList.remove('speaking-pulse');
+    });
+
+    if (isSpeaking) {
+      const targetTile = document.getElementById(`tile-user-${speakerUserId || speakerName}`);
+      if (targetTile) targetTile.classList.add('speaking-pulse');
+    }
+  }
+
+  function appendChatMessage(speaker, message, isOwn, timestamp) {
+    const container = document.getElementById('live-transcript-container');
+    if (!container) return;
+
+    // Remove empty placeholder
+    const emptyNotice = container.querySelector('.empty-transcript-notice');
+    if (emptyNotice) emptyNotice.remove();
+
+    const timeStr = timestamp
+      ? new Date(timestamp).toLocaleTimeString('en-IN', { minute: '2-digit', second: '2-digit' })
+      : new Date().toLocaleTimeString('en-IN', { minute: '2-digit', second: '2-digit' });
+
+    const color = getAvatarColor(speaker);
+
+    const row = document.createElement('div');
+    row.className = `transcript-bubble ${isOwn ? 'is-self' : ''}`;
+    row.innerHTML = `
+      <div class="transcript-meta">
+        <span class="transcript-speaker" style="color:${color}">${speaker}</span>
+        <span class="transcript-time">[${timeStr}]</span>
+      </div>
+      <div class="transcript-body">${escapeHtml(message)}</div>
+    `;
+
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function appendSystemMessage(text) {
+    const container = document.getElementById('live-transcript-container');
+    if (!container) return;
+
+    const row = document.createElement('div');
+    row.className = 'transcript-system-message';
+    row.textContent = text;
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function renderTopicBriefing() {
+    if (!topicContent) return;
+    const briefingContainer = document.getElementById('topic-briefing-content');
+    if (!briefingContainer) return;
+
+    briefingContainer.innerHTML = `
+      <div style="margin-bottom:14px">
+        <div style="font-size:0.75rem; font-weight:700; color:#a78bfa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px">Overview</div>
+        <p style="font-size:0.85rem; line-height:1.6; color:var(--text-secondary); margin:0">${topicContent.overview || ''}</p>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px">
+        <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:12px">
+          <div style="font-size:0.75rem; font-weight:700; color:#34d399; margin-bottom:6px">✓ Key Arguments (Pros)</div>
+          <ul style="margin:0; padding-left:16px; font-size:0.8rem; color:var(--text-secondary); line-height:1.5">
+            ${(topicContent.pros || []).map(p => `<li>${p}</li>`).join('')}
+          </ul>
+        </div>
+        <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:12px">
+          <div style="font-size:0.75rem; font-weight:700; color:#f87171; margin-bottom:6px">⚠️ Challenges / Counterarguments</div>
+          <ul style="margin:0; padding-left:16px; font-size:0.8rem; color:var(--text-secondary); line-height:1.5">
+            ${(topicContent.cons || []).map(c => `<li>${c}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+
+      <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:10px; padding:12px">
+        <div style="font-size:0.75rem; font-weight:700; color:#60a5fa; margin-bottom:6px">📊 Facts &amp; Statistics</div>
+        <ul style="margin:0; padding-left:16px; font-size:0.8rem; color:var(--text-secondary); line-height:1.5">
+          ${(topicContent.facts || []).map(f => `<li>${f}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // ─── USER CONTROLS & SPEECH INTEGRATION ────────────────────────────────────
+  function setupUIEventListeners() {
+    // Host Start Button (in Lobby)
+    const btnLobbyStart = document.getElementById('btn-lobby-start-now');
+    if (btnLobbyStart) {
+      btnLobbyStart.addEventListener('click', () => {
+        if (!isHost) return;
+        socket.emit('room:start', { roomId, userId });
+      });
+    }
+
+    // Host Cancel Button (in Lobby)
+    const btnLobbyCancel = document.getElementById('btn-lobby-cancel');
+    if (btnLobbyCancel) {
+      btnLobbyCancel.addEventListener('click', async () => {
+        if (!isHost) return;
+        if (!confirm('Are you sure you want to cancel this Group Discussion room?')) return;
+        try {
+          await API.Rooms.cancel(roomId);
+          AppUtils.showToast('Room cancelled', 'info');
+          window.location.href = '/select-mode.html';
+        } catch (e) {
+          AppUtils.showToast(e.message || 'Could not cancel room', 'error');
+        }
+      });
+    }
+
+    // Host End Discussion Button (in Active GD)
+    const btnHostEnd = document.getElementById('btn-host-end-gd');
+    if (btnHostEnd) {
+      btnHostEnd.addEventListener('click', () => {
+        if (!isHost) return;
+        const confirmModal = document.getElementById('end-confirm-modal');
+        if (confirmModal) confirmModal.style.display = 'flex';
+      });
+    }
+
+    // Confirm End Modal Buttons
+    const btnConfirmEndYes = document.getElementById('btn-confirm-end-yes');
+    if (btnConfirmEndYes) {
+      btnConfirmEndYes.addEventListener('click', () => {
+        document.getElementById('end-confirm-modal').style.display = 'none';
+        socket.emit('room:end', { roomId, userId });
+      });
+    }
+    const btnConfirmEndNo = document.getElementById('btn-confirm-end-no');
+    if (btnConfirmEndNo) {
+      btnConfirmEndNo.addEventListener('click', () => {
+        document.getElementById('end-confirm-modal').style.display = 'none';
+      });
+    }
+
+    // Microphone Speak Toggle Button (Web Speech STT)
+    const btnVoice = document.getElementById('voice-input-btn');
+    if (btnVoice) {
+      btnVoice.addEventListener('click', toggleVoiceSpeaking);
+    }
+
+    // Mute/Unmute Toggle
+    const btnMute = document.getElementById('btn-toggle-mute');
+    if (btnMute) {
+      btnMute.addEventListener('click', toggleMute);
+    }
+
+    // Send text message (Fallback)
+    const btnSend = document.getElementById('chat-send-btn');
+    const inputMsg = document.getElementById('chat-text-input');
+    if (btnSend && inputMsg) {
+      btnSend.addEventListener('click', sendTextMessage);
+      inputMsg.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendTextMessage();
+        }
+      });
+    }
+
+    // Topic Briefing Toggle Drawer
+    const btnBriefing = document.getElementById('btn-toggle-briefing');
+    const drawer = document.getElementById('topic-briefing-drawer');
+    if (btnBriefing && drawer) {
+      btnBriefing.addEventListener('click', () => {
+        const isShown = drawer.style.display === 'block';
+        drawer.style.display = isShown ? 'none' : 'block';
+      });
+    }
+  }
+
+  function toggleVoiceSpeaking() {
+    const voiceBtn = document.getElementById('voice-input-btn');
+    const inputStatus = document.getElementById('voice-status-text');
+
+    if (Speech.isListening()) {
+      Speech.stopListening();
+      if (voiceBtn) {
+        voiceBtn.classList.remove('recording');
+        voiceBtn.innerHTML = '🎤 <span>Click to Speak</span>';
+      }
+      if (inputStatus) inputStatus.textContent = 'Microphone ready';
+      socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+      return;
+    }
+
+    // Start existing Speech Recognition pipeline
+    const started = Speech.startListening(
+      // On interim/final result
+      (finalText, interimText) => {
+        socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+        if (inputStatus) inputStatus.textContent = `🎙️ "${interimText || finalText}"`;
+
+        // Reset silence timer
+        clearTimeout(speechSilenceTimer);
+        speechSilenceTimer = setTimeout(() => {
+          socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+        }, 1500);
+      },
+      // On speech end
+      (finalTranscript, isSuccess, errorMsg) => {
+        if (voiceBtn) {
+          voiceBtn.classList.remove('recording');
+          voiceBtn.innerHTML = '🎤 <span>Click to Speak</span>';
+        }
+        if (inputStatus) inputStatus.textContent = 'Microphone ready';
+        socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+
+        if (finalTranscript && finalTranscript.trim()) {
+          socket.emit('room:message', {
+            roomId,
+            userName,
+            userId,
+            message: finalTranscript.trim(),
+            timestamp: new Date().toISOString()
+          });
+        }
+      },
+      true // continuous listening
+    );
+
+    if (started) {
+      if (voiceBtn) {
+        voiceBtn.classList.add('recording');
+        voiceBtn.innerHTML = '⏹️ <span>Speaking... (Click to Stop)</span>';
+      }
+      if (inputStatus) inputStatus.textContent = 'Listening... Speak now!';
+      socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+    } else {
+      AppUtils.showToast('Microphone not available or permission denied.', 'error');
+    }
+  }
+
+  function toggleMute() {
+    isMuted = !isMuted;
+    socket.emit('room:toggle_mute', { roomId, isMuted });
+    const btn = document.getElementById('btn-toggle-mute');
+    if (btn) {
+      btn.innerHTML = isMuted ? '🔇 Unmute' : '🎤 Mute';
+      btn.className = isMuted ? 'btn btn-danger btn-sm' : 'btn btn-secondary btn-sm';
+    }
+    if (isMuted && Speech.isListening()) {
+      Speech.stopListening();
+    }
+  }
+
+  function sendTextMessage() {
+    const input = document.getElementById('chat-text-input');
+    const msg = input?.value.trim();
+    if (!msg || !socket) return;
+
+    socket.emit('room:message', {
+      roomId,
+      userName,
+      userId,
+      message: msg,
+      timestamp: new Date().toISOString()
+    });
+
+    input.value = '';
+  }
+
+  // ─── SHARE & INVITATION MECHANISMS ─────────────────────────────────────────
+  function copyRoomCode() {
+    const code = roomCode || roomId;
+    if (!code) return;
+    navigator.clipboard.writeText(code).then(() => {
+      AppUtils.showToast(`✓ Room Code "${code}" copied to clipboard!`, 'success');
+    }).catch(() => {
+      AppUtils.showToast(`Room Code: ${code}`, 'info');
+    });
+  }
+
+  function copyJoinLink() {
+    const url = `${window.location.origin}/gd/join/${encodeURIComponent(roomCode || roomId)}`;
+    navigator.clipboard.writeText(url).then(() => {
+      AppUtils.showToast('✓ Join link copied to clipboard! 🔗', 'success');
+    }).catch(() => {
+      AppUtils.showToast(`Join URL: ${url}`, 'info');
+    });
+  }
+
+  function shareViaWhatsApp() {
+    const code = roomCode || roomId;
+    const url = `${window.location.origin}/gd/join/${encodeURIComponent(code)}`;
+
+    const message =
+`You're invited to join a Group Discussion!
+
+Topic:
+${topic || 'Group Discussion'}
+
+GD Code:
+${code}
+
+Join the discussion:
+${url}
+
+Please join before the joining time expires.`;
+
+    const encoded = encodeURIComponent(message);
+    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+  }
+
+  // ─── UTILITIES ─────────────────────────────────────────────────────────────
+  function getAvatarColor(name) {
+    const colors = ['#6c63ff', '#10b981', '#3b82f6', '#ec4899', '#f59e0b', '#0ea5e9', '#8b5cf6', '#14b8a6'];
+    const idx = Math.abs((name || 'User').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % colors.length;
+    return colors[idx];
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(text || ''));
+    return div.innerHTML;
+  }
+
+  function openJoinDialog() {
+    window.location.href = '/select-mode.html';
+  }
+
+  return {
+    init,
+    copyRoomCode,
+    copyJoinLink,
+    shareViaWhatsApp,
+    toggleVoiceSpeaking,
+    toggleMute,
+    sendTextMessage
+  };
+})();
+
+window.HumanRoom = HumanRoom;
+
+document.addEventListener('DOMContentLoaded', () => {
+  HumanRoom.init();
+});
