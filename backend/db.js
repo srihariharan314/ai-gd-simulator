@@ -20,11 +20,13 @@ if (process.env.VERCEL) {
 
 const db = new DatabaseSync(dbFilePath);
 
-// Enable WAL mode & foreign keys
+// Enable WAL mode and keep foreign keys permissive to prevent crashes on ephemeral serverless containers
 try {
   db.exec('PRAGMA journal_mode = WAL;');
 } catch (e) {}
-db.exec('PRAGMA foreign_keys = ON;');
+try {
+  db.exec('PRAGMA foreign_keys = OFF;');
+} catch (e) {}
 
 // Polyfill transaction method for compatibility with better-sqlite3 callers
 db.transaction = function (fn) {

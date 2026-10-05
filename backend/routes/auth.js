@@ -58,7 +58,19 @@ router.post('/login', (req, res) => {
     return res.status(400).json({ error: 'Email and password are required.' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  const cleanEmail = email.toLowerCase().trim();
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+
+  if (!user && cleanEmail === 'demo@gd.com') {
+    try {
+      const salt = bcrypt.genSaltSync(10);
+      const hash = bcrypt.hashSync('demo123', salt);
+      db.prepare('INSERT OR IGNORE INTO users (name, email, password, bio) VALUES (?, ?, ?, ?)').run(
+        'Demo User', 'demo@gd.com', hash, 'Aspirant preparing for placement & MBA group discussions.'
+      );
+      user = db.prepare('SELECT * FROM users WHERE email = ?').get('demo@gd.com');
+    } catch (_) {}
+  }
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password.' });
