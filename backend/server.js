@@ -42,13 +42,22 @@ app.get(['/gd/join/:code', '/join/:code'], (req, res) => {
 
 // ─── API ROUTES ──────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
 app.use('/api/sessions', sessionsRoutes);
+app.use('/sessions', sessionsRoutes);
+
 app.use('/api/ai', aiRoutes);
+app.use('/ai', aiRoutes);
+
 app.use('/api/performance', performanceRoutes);
+app.use('/performance', performanceRoutes);
+
 app.use('/api/rooms', roomsRoutes);
+app.use('/rooms', roomsRoutes);
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get(['/api/health', '/health'], (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -139,11 +148,13 @@ function startRoomDiscussion(roomId, reason = 'Discussion started!') {
 
   room.status = 'ACTIVE';
   room.gdTimerRemaining = room.gdDuration;
+  const gdDeadline = new Date(Date.now() + (room.gdDuration || 300) * 1000).toISOString();
+  room.gdDeadline = gdDeadline;
 
   // Update Database
   try {
-    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP WHERE room_id = ?")
-      .run(room.roomId);
+    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
+      .run(gdDeadline, room.roomId);
   } catch (e) {
     console.error('Error updating human_rooms to ACTIVE:', e.message);
   }
@@ -152,6 +163,7 @@ function startRoomDiscussion(roomId, reason = 'Discussion started!') {
   io.to(room.roomId).emit('room:started', {
     topic: room.topic,
     duration: room.gdDuration,
+    deadline: gdDeadline,
     message: reason
   });
   console.log(`🚀 Room ${room.roomCode} (${room.roomId}) is now ACTIVE!`);

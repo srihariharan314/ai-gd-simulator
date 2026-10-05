@@ -43,97 +43,27 @@ function ensureUserExists(userId, name, email) {
 }
 
 /**
- * Self-healing room lookup for serverless environments (e.g. Vercel)
- * where each lambda instance may have an isolated ephemeral /tmp SQLite database.
+ * Find existing room by room_id or room_code
  */
-function findOrSelfHealRoom(identifier, fallbackTopic, userObj, explicitHostId) {
+function findRoom(identifier) {
   if (!identifier) return null;
   const raw = String(identifier).trim();
   const upper = raw.toUpperCase();
   const alphanumericOnly = upper.replace(/[^A-Z0-9]/g, '');
 
-  // 1. Look up existing room in SQLite
   let room = db.prepare(`
     SELECT * FROM human_rooms
     WHERE room_id = ? OR room_code = ? OR room_code = ? OR room_id = ?
   `).get(raw, upper, alphanumericOnly, upper);
 
-  if (room) return room;
-
-  // 2. Check if identifier is plausibly a room code or room UUID
-  const isLikelyCode = upper.startsWith('GD') || (alphanumericOnly.length >= 4 && alphanumericOnly.length <= 12);
-  const isLikelyUuid = raw.length >= 30 && raw.includes('-');
-
-  if (!isLikelyCode && !isLikelyUuid) {
-    return null;
-  }
-
-  let roomCode = '';
-  let roomId = '';
-
-  if (isLikelyUuid) {
-    roomId = raw;
-    roomCode = 'GD-' + (alphanumericOnly.slice(0, 5) || 'ROOM1');
-  } else {
-    roomCode = upper.startsWith('GD-')
-      ? upper
-      : (upper.startsWith('GD') ? 'GD-' + upper.slice(2) : 'GD-' + upper);
-    roomId = raw.startsWith('room_') ? raw : ('room_' + roomCode);
-  }
-
-  // 3. Derive host_id reliably:
-  let hostId = null;
-  if (explicitHostId) {
-    hostId = parseInt(explicitHostId, 10);
-  } else {
-    const existingSession = db.prepare('SELECT user_id FROM gd_sessions WHERE room_id = ? ORDER BY session_id ASC LIMIT 1').get(roomId);
-    if (existingSession && existingSession.user_id) {
-      hostId = existingSession.user_id;
-    }
-  }
-
-  // If still unknown, check if userObj is actively creating the room
-  if (!hostId) {
-    if (userObj && userObj.isCreating) {
-      hostId = ensureUserExists(userObj.user_id, userObj.name, userObj.email);
-    } else {
-      // Default to room creator (1) so a joining participant is NEVER made host!
-      hostId = ensureUserExists(1, 'Host', 'demo@gd.com');
-    }
-  }
-
-  const topic = (fallbackTopic && fallbackTopic.trim()) || 'AI: Boon or Bane?';
-  const joinSec = 180;
-  const joinDeadline = new Date(Date.now() + joinSec * 1000).toISOString();
-
-  try {
-    db.prepare(`
-      INSERT OR IGNORE INTO human_rooms
-      (room_id, room_code, host_id, topic, category, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
-      VALUES (?, ?, ?, ?, 'General', ?, ?, 300, 6, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP)
-    `).run(roomId, roomCode, hostId, topic, joinSec, joinDeadline);
-
-    // Register host in room_participants so participants always see the host
-    const hostUserRecord = db.prepare('SELECT user_id, name FROM users WHERE user_id = ?').get(hostId);
-    if (hostUserRecord) {
-      db.prepare(`
-        INSERT OR IGNORE INTO room_participants
-        (room_id, user_id, name, role, is_muted, connection_status, joined_at)
-        VALUES (?, ?, ?, 'host', 0, 'connected', CURRENT_TIMESTAMP)
-      `).run(roomId, hostUserRecord.user_id, hostUserRecord.name);
-    }
-
-    return db.prepare('SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?').get(roomId, roomCode);
-  } catch (err) {
-    console.error('Failed to self-heal room in SQLite:', err);
-    return null;
-  }
+  return room || null;
 }
 
-router.findOrSelfHealRoom = findOrSelfHealRoom;
+router.findRoom = findRoom;
+router.findOrSelfHealRoom = findRoom; // Backward compatibility alias
 
 // ─── POST /api/rooms ─────────────────────────────────────────────────────────
-// Host creates a new human GD room
+// Host creates a new human GD room (Single session, authoritative host)
 router.post('/', authMiddleware, async (req, res) => {
   const {
     topic,
@@ -158,15 +88,16 @@ router.post('/', authMiddleware, async (req, res) => {
   // Ensure unique room code
   let attempts = 0;
   while (attempts < 10) {
-    const existing = db.prepare('SELECT room_code FROM human_rooms WHERE room_code = ? AND status NOT IN (\'COMPLETED\', \'CANCELLED\', \'EXPIRED\')').get(roomCode);
+    const existing = db.prepare("SELECT room_code FROM human_rooms WHERE room_code = ? AND status NOT IN ('COMPLETED', 'CANCELLED', 'EXPIRED')").get(roomCode);
     if (!existing) break;
     roomCode = generateRoomCode();
     attempts++;
   }
 
+  // Single authoritative server-side joining deadline
   const joinDeadline = new Date(Date.now() + joinSec * 1000).toISOString();
 
-  // Fetch or generate rich topic content asynchronously
+  // Generate rich topic context
   let topicContent = '';
   try {
     const contextData = await generateTopicContext(cleanTopic);
@@ -178,7 +109,7 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     const hostUserId = ensureUserExists(req.user.user_id, req.user.name, req.user.email);
 
-    // 1. Insert room record with authoritative host_id
+    // 1. Insert room record with authoritative host_id and join_deadline
     db.prepare(`
       INSERT INTO human_rooms
       (room_id, room_code, host_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
@@ -226,8 +157,7 @@ router.get('/validate/:code', (req, res) => {
     return res.status(400).json({ valid: false, error: 'Invalid GD room code.', reason: 'invalid_code' });
   }
 
-  // Look up by room_code or room_id with serverless self-healing fallback
-  const room = findOrSelfHealRoom(code, req.query.topic, req.user, req.query.hostId);
+  const room = findRoom(code);
 
   if (!room) {
     return res.status(404).json({ valid: false, error: 'Invalid GD room code.', reason: 'not_found' });
@@ -270,6 +200,8 @@ router.get('/validate/:code', (req, res) => {
     return res.status(400).json({ valid: false, error: 'This GD is full.', reason: 'full' });
   }
 
+  const remainingJoining = Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - Date.now()) / 1000));
+
   return res.json({
     valid: true,
     room: {
@@ -283,8 +215,92 @@ router.get('/validate/:code', (req, res) => {
       status: room.status,
       joining_duration: room.joining_duration,
       gd_duration: room.gd_duration,
-      join_deadline: room.join_deadline
+      join_deadline: room.join_deadline,
+      remaining_joining_seconds: remainingJoining
     }
+  });
+});
+
+// ─── GET /api/rooms/:roomId/sync ─────────────────────────────────────────────
+// Real-time synchronization poll endpoint (for all participants & host)
+router.get('/:roomId/sync', authMiddleware, (req, res) => {
+  const room = findRoom(req.params.roomId);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  // Calculate live deadlines
+  const now = Date.now();
+  let remainingJoining = 0;
+  if (room.join_deadline) {
+    remainingJoining = Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - now) / 1000));
+  }
+
+  let remainingGd = room.gd_duration || 300;
+  if (room.status === 'ACTIVE') {
+    if (room.gd_deadline) {
+      remainingGd = Math.max(0, Math.floor((new Date(room.gd_deadline).getTime() - now) / 1000));
+    } else if (room.started_at) {
+      const elapsed = Math.floor((now - new Date(room.started_at).getTime()) / 1000);
+      remainingGd = Math.max(0, (room.gd_duration || 300) - elapsed);
+    }
+  }
+
+  // Auto-start if joining time expired and at least 2 participants joined
+  if (room.status === 'WAITING_FOR_PARTICIPANTS' && remainingJoining <= 0) {
+    const pCount = db.prepare(`SELECT COUNT(*) as count FROM room_participants WHERE room_id = ? AND connection_status != 'left'`).get(room.room_id).count;
+    if (pCount >= 2) {
+      const gdDeadline = new Date(Date.now() + (room.gd_duration || 300) * 1000).toISOString();
+      db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?").run(gdDeadline, room.room_id);
+      room.status = 'ACTIVE';
+      room.gd_deadline = gdDeadline;
+      remainingGd = room.gd_duration || 300;
+    }
+  }
+
+  const rawParticipants = db.prepare(`
+    SELECT p.*, u.avatar
+    FROM room_participants p
+    LEFT JOIN users u ON p.user_id = u.user_id
+    WHERE p.room_id = ?
+    ORDER BY p.id ASC
+  `).all(room.room_id);
+
+  const participants = rawParticipants.map(p => ({
+    ...p,
+    role: (p.user_id === room.host_id) ? 'host' : 'participant'
+  }));
+
+  const transcripts = db.prepare(`
+    SELECT transcript_id, speaker, speaker_type, message, user_id, timestamp
+    FROM gd_transcripts
+    WHERE room_id = ?
+    ORDER BY timestamp ASC
+  `).all(room.room_id);
+
+  const isHost = (req.user.user_id === room.host_id);
+
+  res.json({
+    room: {
+      room_id: room.room_id,
+      room_code: room.room_code,
+      topic: room.topic,
+      category: room.category,
+      status: room.status,
+      host_id: room.host_id,
+      joining_duration: room.joining_duration,
+      join_deadline: room.join_deadline,
+      gd_duration: room.gd_duration,
+      gd_deadline: room.gd_deadline,
+      started_at: room.started_at,
+      ended_at: room.ended_at
+    },
+    isHost,
+    remaining_joining_seconds: remainingJoining,
+    remaining_gd_seconds: remainingGd,
+    server_time: new Date().toISOString(),
+    participants,
+    transcripts
   });
 });
 
@@ -292,7 +308,7 @@ router.get('/validate/:code', (req, res) => {
 // Get complete room details, participants, and status
 router.get('/:roomId', authMiddleware, (req, res) => {
   const roomId = req.params.roomId;
-  const room = findOrSelfHealRoom(roomId, req.query.topic, req.user, req.query.hostId);
+  const room = findRoom(roomId);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
@@ -306,7 +322,7 @@ router.get('/:roomId', authMiddleware, (req, res) => {
     ORDER BY p.id ASC
   `).all(room.room_id);
 
-  // Derive role authoritatively: ONLY user_id === room.host_id is 'host'
+  // Authoritative role: ONLY user_id === room.host_id is 'host'
   const participants = rawParticipants.map(p => ({
     ...p,
     role: (p.user_id === room.host_id) ? 'host' : 'participant'
@@ -319,12 +335,17 @@ router.get('/:roomId', authMiddleware, (req, res) => {
     try { parsedContent = JSON.parse(room.topic_content); } catch { parsedContent = null; }
   }
 
+  const remainingJoining = room.join_deadline
+    ? Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - Date.now()) / 1000))
+    : (room.joining_duration || 120);
+
   res.json({
     room,
     topicContent: parsedContent,
     participants,
     isHost,
     hostId: room.host_id,
+    remaining_joining_seconds: remainingJoining,
     currentUser: {
       userId: req.user.user_id,
       name: req.user.name,
@@ -337,7 +358,7 @@ router.get('/:roomId', authMiddleware, (req, res) => {
 // Authenticated participant joins room and receives session
 router.post('/:roomId/join', authMiddleware, (req, res) => {
   const roomIdParam = req.params.roomId;
-  const room = findOrSelfHealRoom(roomIdParam, req.query.topic, req.user, req.query.hostId);
+  const room = findRoom(roomIdParam);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
@@ -392,7 +413,7 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
 
     const validUserId = ensureUserExists(userId, userName, req.user?.email);
 
-    // Create a personal session for this participant
+    // Create a personal session for this participant in gd_sessions
     const sessionRes = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
@@ -434,9 +455,9 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
 });
 
 // ─── POST /api/rooms/:roomId/start ──────────────────────────────────────────
-// Host starts discussion via HTTP REST (critical for serverless / Vercel)
+// Host manually starts discussion before joining deadline
 router.post('/:roomId/start', authMiddleware, (req, res) => {
-  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
+  const room = findRoom(req.params.roomId);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
   }
@@ -446,9 +467,11 @@ router.post('/:roomId/start', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Forbidden: Only the host can start this Group Discussion.' });
   }
 
+  const gdDeadline = new Date(Date.now() + (room.gd_duration || 300) * 1000).toISOString();
+
   try {
-    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP WHERE room_id = ?")
-      .run(room.room_id);
+    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
+      .run(gdDeadline, room.room_id);
   } catch (err) {
     console.warn('Error starting room in DB:', err.message);
   }
@@ -458,14 +481,15 @@ router.post('/:roomId/start', authMiddleware, (req, res) => {
     status: 'ACTIVE',
     roomId: room.room_id,
     roomCode: room.room_code,
-    gd_duration: room.gd_duration || 300
+    gd_duration: room.gd_duration || 300,
+    gd_deadline: gdDeadline
   });
 });
 
 // ─── POST /api/rooms/:roomId/end ────────────────────────────────────────────
 // Host ends discussion via HTTP REST
 router.post('/:roomId/end', authMiddleware, (req, res) => {
-  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
+  const room = findRoom(req.params.roomId);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
   }
@@ -522,7 +546,7 @@ router.post('/:roomId/cancel', authMiddleware, (req, res) => {
 // ─── GET /api/rooms/:roomId/results ─────────────────────────────────────────
 // Get post-GD results summary for all participants (host overview)
 router.get('/:roomId/results', authMiddleware, (req, res) => {
-  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
+  const room = findRoom(req.params.roomId);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
   }

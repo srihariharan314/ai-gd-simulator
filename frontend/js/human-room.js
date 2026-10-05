@@ -1,8 +1,8 @@
 /**
  * human-room.js — Complete Human Group Discussion Room Lifecycle
- * Handles: Waiting Lobby, Joining Countdown, Realtime Participant Sync,
- * Server Authoritative Host Controls, Web Speech STT, Live Transcript,
- * WhatsApp Invitation, and Post-GD Multi-Participant AI Evaluation.
+ * Handles: Waiting Lobby, Server-Authoritative Shared Countdowns,
+ * Realtime Synchronization, Single Host Security, Web Speech STT,
+ * WhatsApp Invitation, and Multi-Participant AI Evaluation.
  */
 
 const HumanRoom = (() => {
@@ -24,64 +24,92 @@ const HumanRoom = (() => {
   let speechSilenceTimer = null;
   let gdDuration = 300;
   let joiningDuration = 120;
+  let joinDeadline = null;
+  let gdDeadline = null;
   let topicContent = null;
   let timerInterval = null;
-  let timerRemainingSeconds = 120;
+  let syncInterval = null;
+  const renderedMessageIds = new Set();
 
-  // ─── CLIENT-SIDE SMOOTH COUNTDOWN TIMER ───────────────────────────────────
-  function startClientTimer(initialSeconds, timerType) {
-    if (timerInterval) clearInterval(timerInterval);
-    timerRemainingSeconds = Math.max(0, parseInt(initialSeconds, 10) || (timerType === 'joining' ? 120 : 300));
-    updateTimerDisplay(timerRemainingSeconds, timerType);
-
-    timerInterval = setInterval(() => {
-      timerRemainingSeconds--;
-      updateTimerDisplay(timerRemainingSeconds, timerType);
-
-      if (timerRemainingSeconds <= 0) {
-        clearInterval(timerInterval);
-        timerInterval = null;
-        if (timerType === 'joining') {
-          console.log('⏰ Joining countdown expired. Starting GD automatically...');
-          startDiscussion('Joining countdown ended. Discussion started automatically!');
-        } else if (timerType === 'gd') {
-          console.log('⏰ Discussion timer expired. Concluding GD...');
-          endDiscussion('Discussion time limit reached.');
-        }
+  function getProductionBaseUrl() {
+    if (typeof window !== 'undefined' && window.location) {
+      const origin = window.location.origin;
+      if (origin && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+        return origin;
       }
-    }, 1000);
+    }
+    return 'https://ai-gd-simulator.vercel.app';
   }
 
-  // ─── START & END DISCUSSION CONTROLS (SERVERLESS AUTHORITATIVE) ───────────
+  // ─── SERVER-DEADLINE DRIVEN COUNTDOWN TIMER ───────────────────────────────
+  function syncDeadlineTimer(deadlineIso, timerType, fallbackDuration = 120) {
+    if (timerInterval) clearInterval(timerInterval);
+
+    function tick() {
+      let remaining = fallbackDuration;
+      if (deadlineIso) {
+        const msLeft = new Date(deadlineIso).getTime() - Date.now();
+        remaining = Math.max(0, Math.floor(msLeft / 1000));
+      } else {
+        remaining = Math.max(0, fallbackDuration);
+      }
+
+      updateTimerDisplay(remaining, timerType);
+
+      if (remaining <= 0) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        if (timerType === 'joining' && roomStatus === 'WAITING_FOR_PARTICIPANTS') {
+          console.log('⏰ Joining deadline reached. Checking auto-start...');
+          if (isHost) {
+            startDiscussion('Joining time expired. Discussion automatically started!');
+          }
+        } else if (timerType === 'gd' && roomStatus === 'ACTIVE') {
+          console.log('⏰ Discussion deadline reached. Concluding discussion...');
+          if (isHost) {
+            endDiscussion('Discussion time limit reached.');
+          }
+        }
+      }
+    }
+
+    tick();
+    timerInterval = setInterval(tick, 1000);
+  }
+
+  // ─── START & END CONTROLS (SERVER-AUTHORITATIVE) ──────────────────────────
   async function startDiscussion(reason = 'Discussion started by host') {
-    if (roomStatus === 'ACTIVE') return;
+    if (roomStatus === 'ACTIVE' || roomStatus === 'COMPLETED') return;
     roomStatus = 'ACTIVE';
 
-    // 1. Emit to Socket if connected
+    // 1. Socket emit if connected
     try {
       if (socket && socket.connected) {
         socket.emit('room:start', { roomId, userId });
       }
-    } catch (e) {
-      console.warn('Socket start error:', e.message);
-    }
+    } catch (e) {}
 
-    // 2. Call backend REST endpoint POST /api/rooms/:roomId/start
+    // 2. HTTP REST endpoint
     try {
       if (API.Rooms && API.Rooms.start) {
-        await API.Rooms.start(roomId);
+        const res = await API.Rooms.start(roomId);
+        if (res && res.gd_deadline) {
+          gdDeadline = res.gd_deadline;
+        }
       }
     } catch (e) {
-      console.warn('REST start error:', e.message);
+      console.warn('REST start notice:', e.message);
     }
 
-    // 3. Update UI immediately
+    // 3. Update UI & timers
     AppUtils.showToast('🚀 Group Discussion has started! Good luck!', 'success', 3500);
     switchViewToActive();
     appendSystemMessage('🚀 Group Discussion is now ACTIVE. Participants may speak.');
 
-    // 4. Start active discussion countdown timer
-    startClientTimer(gdDuration || 300, 'gd');
+    if (!gdDeadline) {
+      gdDeadline = new Date(Date.now() + (gdDuration || 300) * 1000).toISOString();
+    }
+    syncDeadlineTimer(gdDeadline, 'gd', gdDuration || 300);
   }
 
   async function endDiscussion(reason = 'Discussion ended.') {
@@ -92,6 +120,10 @@ const HumanRoom = (() => {
     if (timerInterval) {
       clearInterval(timerInterval);
       timerInterval = null;
+    }
+    if (syncInterval) {
+      clearInterval(syncInterval);
+      syncInterval = null;
     }
 
     try {
@@ -118,7 +150,7 @@ const HumanRoom = (() => {
     userId = user?.user_id;
     userAvatar = (userName.charAt(0) || 'P').toUpperCase();
 
-    // 1. Parse URL parameters and cached room
+    // 1. Parse URL parameters
     const params = new URLSearchParams(window.location.search);
     const action = params.get('action'); // 'create', 'lobby', 'join'
     const queryRoomId = params.get('roomId');
@@ -126,46 +158,27 @@ const HumanRoom = (() => {
     const queryTopic = params.get('topic');
     sessionId = params.get('session');
 
-    let cachedRoom = null;
-    try {
-      cachedRoom = JSON.parse(localStorage.getItem('gd_last_room') || 'null');
-    } catch (e) {}
+    // Initial placeholder values before server response
+    roomCode = queryRoomCode || queryRoomId || 'GD-LIVE';
+    roomId = queryRoomId || ('room_' + roomCode);
+    topic = queryTopic || 'AI: Boon or Bane?';
 
-    // Synchronously set initial values so UI renders immediately
-    roomCode = queryRoomCode || (cachedRoom && cachedRoom.room_code) || queryRoomId || 'GD-LIVE';
-    roomId = queryRoomId || (cachedRoom && cachedRoom.room_id) || ('room_' + roomCode);
-    topic = queryTopic || (cachedRoom && cachedRoom.topic) || 'AI: Boon or Bane?';
-    category = (cachedRoom && cachedRoom.category) || 'General';
+    // Start with isHost = false until verified by server
+    isHost = false;
+    roomHostId = null;
 
-    // Authoritative initial role derivation:
-    // Only action === 'create' or isHost === '1' can be true initially; joining users are strictly false
-    if (action === 'create' || params.get('isHost') === '1') {
-      isHost = true;
-      roomHostId = userId;
-    } else if (action === 'join' || params.get('isHost') === '0') {
-      isHost = false;
-    } else if (cachedRoom && cachedRoom.host_id) {
-      roomHostId = cachedRoom.host_id;
-      isHost = (userId !== null && userId !== undefined && userId === roomHostId);
-    } else {
-      isHost = false;
-    }
-
-    // Initial participant entry for current user
     participants = [{
       userId,
       name: userName,
-      role: isHost ? 'host' : 'participant',
+      role: 'participant',
       isConnected: true,
       isMuted: false,
       isSpeaking: false
     }];
 
-    // IMMEDIATELY render room code, header, lobby, and countdown timer
     updateHeaderInfo();
     setupUIEventListeners();
     switchViewToLobby();
-    startClientTimer(120, 'joining');
     renderParticipants();
 
     const identifier = queryRoomCode || queryRoomId;
@@ -176,38 +189,10 @@ const HumanRoom = (() => {
     }
 
     try {
-      // 2. Fetch authoritative room details from backend
+      // 2. Room lookup or creation
       let roomData = null;
-      if (identifier) {
-        try {
-          const res = await API.Rooms.get(identifier, topic);
-          if (res && res.room) {
-            roomData = res.room;
-            topicContent = res.topicContent;
-            roomHostId = res.room.host_id || res.hostId || roomHostId;
-            if (roomHostId) {
-              isHost = (userId !== null && userId !== undefined && userId === roomHostId);
-            } else if (res.isHost !== undefined) {
-              isHost = !!res.isHost;
-            }
-            if (res.participants && res.participants.length > 0) {
-              participants = res.participants;
-            }
-          }
-        } catch (fetchErr) {
-          console.warn('API.Rooms.get fallback to local state:', fetchErr.message);
-        }
-      }
 
-      if (roomData) {
-        roomId = roomData.room_id || roomId;
-        roomCode = roomData.room_code || roomCode;
-        topic = roomData.topic || topic;
-        category = roomData.category || category;
-        roomStatus = roomData.status || roomStatus;
-        gdDuration = roomData.gd_duration || 300;
-        joiningDuration = roomData.joining_duration || 120;
-      } else if (action === 'create') {
+      if (action === 'create' && !queryRoomId) {
         try {
           const createRes = await API.Rooms.create(
             topic || 'AI: Boon or Bane?',
@@ -217,59 +202,82 @@ const HumanRoom = (() => {
             6
           );
           if (createRes && createRes.room) {
-            roomId = createRes.room.room_id;
-            roomCode = createRes.room.room_code;
-            topic = createRes.room.topic;
+            roomData = createRes.room;
+            roomId = roomData.room_id;
+            roomCode = roomData.room_code;
+            topic = roomData.topic;
             sessionId = createRes.session?.session_id;
-            roomHostId = createRes.room.host_id || userId;
-            isHost = (userId !== null && userId !== undefined && userId === roomHostId);
+            roomHostId = roomData.host_id;
           }
         } catch (createErr) {
-          console.warn('API.Rooms.create fallback:', createErr.message);
+          console.error('Room creation error:', createErr);
+          AppUtils.showToast(createErr.message || 'Could not create room', 'error');
+        }
+      } else if (identifier) {
+        try {
+          const getRes = await API.Rooms.get(identifier, topic);
+          if (getRes && getRes.room) {
+            roomData = getRes.room;
+            topicContent = getRes.topicContent;
+          }
+        } catch (getErr) {
+          console.warn('Room get fallback:', getErr.message);
         }
       }
 
-      // 3. Join the room on the backend (registers participant & session)
+      // 3. Register join in room
       try {
-        const joinRes = await API.Rooms.join(roomId, topic);
-        if (joinRes && joinRes.session) {
-          sessionId = joinRes.session.session_id;
-          localStorage.setItem('gd_current_session', JSON.stringify(joinRes.session));
-        }
-        if (joinRes && joinRes.room) {
-          roomHostId = joinRes.room.host_id || joinRes.hostId || roomHostId;
-          isHost = (userId !== null && userId !== undefined && userId === roomHostId);
-        } else if (joinRes && joinRes.isHost !== undefined) {
-          isHost = !!joinRes.isHost;
-        }
-        if (joinRes && joinRes.participants && joinRes.participants.length > 0) {
-          participants = joinRes.participants;
+        const joinTarget = roomData ? roomData.room_id : (roomId || identifier);
+        const joinRes = await API.Rooms.join(joinTarget, topic);
+        if (joinRes) {
+          if (joinRes.room) roomData = joinRes.room;
+          if (joinRes.session) sessionId = joinRes.session.session_id;
+          if (joinRes.participants && joinRes.participants.length > 0) {
+            participants = joinRes.participants;
+          }
         }
       } catch (joinErr) {
-        console.warn('API.Rooms.join fallback:', joinErr.message);
+        console.warn('Join registration notice:', joinErr.message);
       }
 
-      // 4. Ensure a valid session exists for AI evaluation tracking
-      if (!sessionId) {
-        try {
-          const sessRes = await API.Sessions.create('human', topic, category, roomId);
-          if (sessRes && sessRes.session) {
-            sessionId = sessRes.session.session_id;
-            localStorage.setItem('gd_current_session', JSON.stringify(sessRes.session));
-          }
-        } catch (sessErr) {
-          console.warn('Session create fallback:', sessErr.message);
-        }
+      // 4. Update authoritative state from roomData
+      if (roomData) {
+        roomId = roomData.room_id || roomId;
+        roomCode = roomData.room_code || roomCode;
+        topic = roomData.topic || topic;
+        category = roomData.category || category;
+        roomStatus = roomData.status || roomStatus;
+        gdDuration = roomData.gd_duration || gdDuration;
+        joiningDuration = roomData.joining_duration || joiningDuration;
+        joinDeadline = roomData.join_deadline;
+        gdDeadline = roomData.gd_deadline;
+        roomHostId = roomData.host_id;
+
+        // Authoritative Host Check: only if user_id equals room.host_id
+        isHost = (userId !== null && userId !== undefined && roomHostId !== null && Number(userId) === Number(roomHostId));
       }
 
-      // Update Header & DOM with final room info
+      // 5. Render view and start synchronized timer
       updateHeaderInfo();
       renderParticipants();
       renderTopicBriefing();
-      switchViewToLobby();
 
-      // Connect Socket.IO
+      if (roomStatus === 'ACTIVE') {
+        switchViewToActive();
+        if (!gdDeadline && roomData?.started_at) {
+          gdDeadline = new Date(new Date(roomData.started_at).getTime() + (gdDuration * 1000)).toISOString();
+        }
+        syncDeadlineTimer(gdDeadline, 'gd', gdDuration || 300);
+      } else if (roomStatus === 'COMPLETED') {
+        switchViewToCompleted();
+      } else {
+        switchViewToLobby();
+        syncDeadlineTimer(joinDeadline, 'joining', joiningDuration || 120);
+      }
+
+      // Connect Socket & Start Sync Loop
       connectSocket();
+      startPeriodicSync();
 
     } catch (err) {
       console.error('Human room initialization error:', err);
@@ -277,45 +285,88 @@ const HumanRoom = (() => {
       renderParticipants();
       switchViewToLobby();
       connectSocket();
+      startPeriodicSync();
     }
   }
 
-  // ─── SOCKET.IO CONNECTION & REAL-TIME EVENTS ──────────────────────────────
+  // ─── PERIODIC SYNC LOOP (REAL-TIME POLLING FALLBACK) ───────────────────────
+  function startPeriodicSync() {
+    if (syncInterval) clearInterval(syncInterval);
+
+    syncInterval = setInterval(async () => {
+      if (!roomId || roomStatus === 'COMPLETED') return;
+
+      try {
+        const syncData = await API.Rooms.sync(roomId);
+        if (!syncData || !syncData.room) return;
+
+        const serverRoom = syncData.room;
+        roomHostId = serverRoom.host_id;
+        isHost = (userId !== null && userId !== undefined && roomHostId !== null && Number(userId) === Number(roomHostId));
+
+        if (serverRoom.status && serverRoom.status !== roomStatus) {
+          roomStatus = serverRoom.status;
+          if (roomStatus === 'ACTIVE') {
+            switchViewToActive();
+            gdDeadline = serverRoom.gd_deadline;
+            syncDeadlineTimer(gdDeadline, 'gd', serverRoom.gd_duration || 300);
+          } else if (roomStatus === 'COMPLETED') {
+            switchViewToCompleted();
+          }
+        }
+
+        // Sync participants
+        if (Array.isArray(syncData.participants)) {
+          participants = syncData.participants;
+          renderParticipants();
+        }
+
+        // Sync transcripts
+        if (Array.isArray(syncData.transcripts)) {
+          syncData.transcripts.forEach(t => {
+            const key = `${t.transcript_id || ''}_${t.speaker}_${t.message}`;
+            if (!renderedMessageIds.has(key)) {
+              renderedMessageIds.add(key);
+              appendChatMessage(t.speaker, t.message, Number(t.user_id) === Number(userId), t.timestamp);
+            }
+          });
+        }
+
+        // Update timer if in lobby
+        if (roomStatus === 'WAITING_FOR_PARTICIPANTS' && serverRoom.join_deadline && serverRoom.join_deadline !== joinDeadline) {
+          joinDeadline = serverRoom.join_deadline;
+          syncDeadlineTimer(joinDeadline, 'joining', serverRoom.joining_duration || 120);
+        }
+      } catch (syncErr) {
+        // Silently skip transient sync errors
+      }
+    }, 1500);
+  }
+
+  // ─── SOCKET.IO CONNECTION & EVENTS ─────────────────────────────────────────
   function connectSocket() {
-    socket = io(window.location.origin);
+    try {
+      socket = io(window.location.origin);
+    } catch (e) {
+      console.warn('Socket connection failed, relying on HTTP sync loop:', e.message);
+      return;
+    }
 
     socket.on('connect', () => {
-      console.log('🔌 Connected to Human GD Socket server with ID:', socket.id);
-
+      console.log('🔌 Connected to Socket server with ID:', socket.id);
       if (isHost) {
-        socket.emit('room:create', {
-          roomId,
-          roomCode,
-          topic,
-          userName,
-          userId
-        });
+        socket.emit('room:create', { roomId, roomCode, topic, userName, userId });
       } else {
-        socket.emit('room:join', {
-          roomId,
-          roomCode,
-          userName,
-          userId
-        });
+        socket.emit('room:join', { roomId, roomCode, userName, userId });
       }
     });
 
     socket.on('room:joined', (data) => {
-      roomId = data.roomId;
-      roomCode = data.roomCode || roomCode;
-      topic = data.topic || topic;
       if (data.hostId) {
         roomHostId = data.hostId;
-        isHost = (userId !== null && userId !== undefined && userId === roomHostId);
-      } else if (data.isHost !== undefined) {
-        isHost = !!data.isHost;
+        isHost = (userId !== null && userId !== undefined && Number(userId) === Number(roomHostId));
       }
-      roomStatus = data.status || roomStatus;
+      if (data.status) roomStatus = data.status;
 
       updateHeaderInfo();
 
@@ -340,24 +391,23 @@ const HumanRoom = (() => {
     });
 
     socket.on('room:error', (data) => {
-      AppUtils.showToast(data.message || 'Room error', 'error');
+      AppUtils.showToast(data.message || 'Room notification', 'info');
     });
 
     socket.on('room:joining_timer', (data) => {
       if (data && data.remaining !== undefined) {
-        timerRemainingSeconds = data.remaining;
-        updateTimerDisplay(timerRemainingSeconds, 'joining');
+        updateTimerDisplay(data.remaining, 'joining');
       }
     });
 
     socket.on('room:started', (data) => {
+      if (data && data.deadline) gdDeadline = data.deadline;
       startDiscussion(data?.message || 'Group Discussion started!');
     });
 
     socket.on('room:timer', (data) => {
       if (data && data.remaining !== undefined) {
-        timerRemainingSeconds = data.remaining;
-        updateTimerDisplay(timerRemainingSeconds, 'gd');
+        updateTimerDisplay(data.remaining, 'gd');
       }
     });
 
@@ -365,20 +415,9 @@ const HumanRoom = (() => {
       if (data.participants) {
         participants = data.participants;
         renderParticipants();
-        if (roomStatus === 'WAITING_FOR_PARTICIPANTS') {
-          switchViewToLobby();
-        }
       }
       if (data.participant && data.participant.name !== userName) {
         AppUtils.showToast(`👋 ${data.participant.name} joined the room`, 'info', 2500);
-      }
-    });
-
-    socket.on('room:participant_status', (data) => {
-      const p = participants.find(part => part.userId === data.userId || part.name === data.name);
-      if (p) {
-        p.isConnected = data.isConnected;
-        renderParticipants();
       }
     });
 
@@ -386,9 +425,6 @@ const HumanRoom = (() => {
       if (Array.isArray(updatedList)) {
         participants = updatedList;
         renderParticipants();
-        if (roomStatus === 'WAITING_FOR_PARTICIPANTS') {
-          switchViewToLobby();
-        }
       }
     });
 
@@ -397,14 +433,10 @@ const HumanRoom = (() => {
     });
 
     socket.on('room:message', (data) => {
-      appendChatMessage(data.userName, data.message, data.userId === userId || data.userName === userName, data.timestamp);
-    });
-
-    socket.on('room:host_status', (data) => {
-      const banner = document.getElementById('host-reconnecting-banner');
-      if (banner) {
-        banner.style.display = data.status === 'reconnecting' ? 'flex' : 'none';
-        banner.textContent = `⚠️ ${data.message}`;
+      const key = `${data.timestamp || ''}_${data.userName}_${data.message}`;
+      if (!renderedMessageIds.has(key)) {
+        renderedMessageIds.add(key);
+        appendChatMessage(data.userName, data.message, Number(data.userId) === Number(userId) || data.userName === userName, data.timestamp);
       }
     });
 
@@ -413,19 +445,8 @@ const HumanRoom = (() => {
     });
 
     socket.on('room:evaluations_ready', (data) => {
-      console.log('✅ Post-GD evaluations are ready for room:', data.roomId);
-      setTimeout(() => {
-        navigateToResults();
-      }, 1500);
-    });
-
-    socket.on('disconnect', () => {
-      console.warn('Socket disconnected');
-      const badge = document.getElementById('connection-status-badge');
-      if (badge) {
-        badge.textContent = '🟡 Reconnecting...';
-        badge.className = 'badge badge-warning';
-      }
+      console.log('✅ AI evaluations completed for room:', data.roomId);
+      setTimeout(() => navigateToResults(), 1500);
     });
   }
 
@@ -468,7 +489,6 @@ const HumanRoom = (() => {
       statusBadge.className = 'badge badge-danger';
     }
 
-    // Host controls in active GD
     const hostEndBtn = document.getElementById('btn-host-end-gd');
     if (hostEndBtn) hostEndBtn.style.display = isHost ? 'inline-flex' : 'none';
   }
@@ -491,10 +511,7 @@ const HumanRoom = (() => {
     const msgEl = document.getElementById('completed-message');
     if (msgEl && customMessage) msgEl.textContent = customMessage;
 
-    // Auto navigate after grace time if socket event hasn't already redirected
-    setTimeout(() => {
-      navigateToResults();
-    }, 4000);
+    setTimeout(() => navigateToResults(), 4000);
   }
 
   function navigateToResults() {
@@ -520,8 +537,9 @@ const HumanRoom = (() => {
       if (el) el.textContent = roomCode || roomId || '——';
     });
 
-    // Join Link
-    const directJoinUrl = `${window.location.origin}/gd/join/${encodeURIComponent(roomCode || roomId || '')}`;
+    // Joining Link using production base URL
+    const baseUrl = getProductionBaseUrl();
+    const directJoinUrl = `${baseUrl}/gd/join/${encodeURIComponent(roomCode || roomId || '')}`;
     const linkInputs = ['lobby-join-link-input', 'modal-share-link'];
     linkInputs.forEach(id => {
       const el = document.getElementById(id);
@@ -547,9 +565,7 @@ const HumanRoom = (() => {
 
       const timerLabel = document.getElementById('timer-label');
       if (timerLabel) timerLabel.textContent = 'Joining closes in';
-
     } else {
-      // Discussion Timer
       const headerTimer = document.getElementById('timer-display');
       if (headerTimer) {
         headerTimer.textContent = timeStr;
@@ -568,15 +584,15 @@ const HumanRoom = (() => {
   }
 
   function renderParticipants() {
-    // Deduplicate participants by unique key (userId or socketId or name)
+    // Deduplicate participants and enforce single authoritative host
     const uniqueParticipants = [];
     const seen = new Set();
+
     (participants || []).forEach(p => {
       const key = p.userId || p.socketId || p.name;
       if (key && !seen.has(key)) {
         seen.add(key);
-        // Authoritative role check: user is host ONLY if matches roomHostId or role === 'host'
-        const isParticipantHost = (roomHostId && p.userId === roomHostId) || p.role === 'host';
+        const isParticipantHost = (roomHostId && Number(p.userId) === Number(roomHostId)) || (p.role === 'host' && Number(p.userId) === Number(roomHostId));
         uniqueParticipants.push({
           ...p,
           role: isParticipantHost ? 'host' : 'participant'
@@ -605,7 +621,7 @@ const HumanRoom = (() => {
 
         // HOST SECTION
         if (hostUser) {
-          const isMe = hostUser.userId === userId || hostUser.name === userName;
+          const isMe = Number(hostUser.userId) === Number(userId) || hostUser.name === userName;
           const isOnline = hostUser.isConnected !== false;
           html += `
             <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.1em; color:#fbbf24; margin:8px 0 6px; display:flex; align-items:center; gap:6px">
@@ -644,7 +660,7 @@ const HumanRoom = (() => {
           `;
         } else {
           html += regularParticipants.map(p => {
-            const isMe = p.userId === userId || p.name === userName;
+            const isMe = Number(p.userId) === Number(userId) || p.name === userName;
             const isOnline = p.isConnected !== false;
 
             return `
@@ -675,7 +691,7 @@ const HumanRoom = (() => {
     const activeGrid = document.getElementById('active-participants-grid');
     if (activeGrid) {
       activeGrid.innerHTML = uniqueParticipants.map(p => {
-        const isMe = p.userId === userId || p.name === userName;
+        const isMe = Number(p.userId) === Number(userId) || p.name === userName;
         const isParticipantHost = p.role === 'host';
         const isOnline = p.isConnected !== false;
 
@@ -708,7 +724,6 @@ const HumanRoom = (() => {
   }
 
   function updateSpeakerVisuals(speakerUserId, speakerName, isSpeaking) {
-    // 1. Current Speaker Spotlight Banner
     const speakerBanner = document.getElementById('current-speaker-spotlight');
     if (speakerBanner) {
       if (isSpeaking) {
@@ -727,9 +742,8 @@ const HumanRoom = (() => {
       }
     }
 
-    // 2. Individual tile animation
     participants.forEach(p => {
-      const match = (speakerUserId && p.userId === speakerUserId) || p.name === speakerName;
+      const match = (speakerUserId && Number(p.userId) === Number(speakerUserId)) || p.name === speakerName;
       if (match) p.isSpeaking = !!isSpeaking;
     });
 
@@ -747,7 +761,6 @@ const HumanRoom = (() => {
     const container = document.getElementById('live-transcript-container');
     if (!container) return;
 
-    // Remove empty placeholder
     const emptyNotice = container.querySelector('.empty-transcript-notice');
     if (emptyNotice) emptyNotice.remove();
 
@@ -913,43 +926,50 @@ const HumanRoom = (() => {
         voiceBtn.innerHTML = '🎤 <span>Click to Speak</span>';
       }
       if (inputStatus) inputStatus.textContent = 'Microphone ready';
-      socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+      if (socket && socket.connected) {
+        socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+      }
       return;
     }
 
-    // Start existing Speech Recognition pipeline
     const started = Speech.startListening(
-      // On interim/final result
       (finalText, interimText) => {
-        socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+        if (socket && socket.connected) {
+          socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+        }
         if (inputStatus) inputStatus.textContent = `🎙️ "${interimText || finalText}"`;
 
-        // Reset silence timer
         clearTimeout(speechSilenceTimer);
         speechSilenceTimer = setTimeout(() => {
-          socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+          if (socket && socket.connected) {
+            socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+          }
         }, 1500);
       },
-      // On speech end
       (finalTranscript, isSuccess, errorMsg) => {
         if (voiceBtn) {
           voiceBtn.classList.remove('recording');
           voiceBtn.innerHTML = '🎤 <span>Click to Speak</span>';
         }
         if (inputStatus) inputStatus.textContent = 'Microphone ready';
-        socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+        if (socket && socket.connected) {
+          socket.emit('room:speaking_status', { roomId, isSpeaking: false });
+        }
 
         if (finalTranscript && finalTranscript.trim()) {
-          socket.emit('room:message', {
-            roomId,
-            userName,
-            userId,
-            message: finalTranscript.trim(),
-            timestamp: new Date().toISOString()
-          });
+          const msg = finalTranscript.trim();
+          if (socket && socket.connected) {
+            socket.emit('room:message', {
+              roomId,
+              userName,
+              userId,
+              message: msg,
+              timestamp: new Date().toISOString()
+            });
+          }
         }
       },
-      true // continuous listening
+      true
     );
 
     if (started) {
@@ -958,7 +978,9 @@ const HumanRoom = (() => {
         voiceBtn.innerHTML = '⏹️ <span>Speaking... (Click to Stop)</span>';
       }
       if (inputStatus) inputStatus.textContent = 'Listening... Speak now!';
-      socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+      if (socket && socket.connected) {
+        socket.emit('room:speaking_status', { roomId, isSpeaking: true });
+      }
     } else {
       AppUtils.showToast('Microphone not available or permission denied.', 'error');
     }
@@ -966,7 +988,9 @@ const HumanRoom = (() => {
 
   function toggleMute() {
     isMuted = !isMuted;
-    socket.emit('room:toggle_mute', { roomId, isMuted });
+    if (socket && socket.connected) {
+      socket.emit('room:toggle_mute', { roomId, isMuted });
+    }
     const btn = document.getElementById('btn-toggle-mute');
     if (btn) {
       btn.innerHTML = isMuted ? '🔇 Unmute' : '🎤 Mute';
@@ -980,15 +1004,17 @@ const HumanRoom = (() => {
   function sendTextMessage() {
     const input = document.getElementById('chat-text-input');
     const msg = input?.value.trim();
-    if (!msg || !socket) return;
+    if (!msg) return;
 
-    socket.emit('room:message', {
-      roomId,
-      userName,
-      userId,
-      message: msg,
-      timestamp: new Date().toISOString()
-    });
+    if (socket && socket.connected) {
+      socket.emit('room:message', {
+        roomId,
+        userName,
+        userId,
+        message: msg,
+        timestamp: new Date().toISOString()
+      });
+    }
 
     input.value = '';
   }
@@ -1005,9 +1031,10 @@ const HumanRoom = (() => {
   }
 
   function copyJoinLink() {
-    const url = `${window.location.origin}/gd/join/${encodeURIComponent(roomCode || roomId)}`;
+    const baseUrl = getProductionBaseUrl();
+    const url = `${baseUrl}/gd/join/${encodeURIComponent(roomCode || roomId)}`;
     navigator.clipboard.writeText(url).then(() => {
-      AppUtils.showToast('✓ Join link copied to clipboard! 🔗', 'success');
+      AppUtils.showToast('✓ Production join link copied to clipboard! 🔗', 'success');
     }).catch(() => {
       AppUtils.showToast(`Join URL: ${url}`, 'info');
     });
@@ -1015,7 +1042,8 @@ const HumanRoom = (() => {
 
   function shareViaWhatsApp() {
     const code = roomCode || roomId;
-    const url = `${window.location.origin}/gd/join/${encodeURIComponent(code)}`;
+    const baseUrl = getProductionBaseUrl();
+    const url = `${baseUrl}/gd/join/${encodeURIComponent(code)}`;
 
     const message =
 `You're invited to join a Group Discussion!

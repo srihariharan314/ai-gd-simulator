@@ -322,6 +322,10 @@ const Rooms = {
 
   async getResults(roomId) {
     return apiFetch(`/rooms/${encodeURIComponent(roomId)}/results`);
+  },
+
+  async sync(roomId) {
+    return apiFetch(`/rooms/${encodeURIComponent(roomId)}/sync`);
   }
 };
 

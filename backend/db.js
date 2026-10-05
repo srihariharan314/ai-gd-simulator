@@ -198,6 +198,7 @@ const MIGRATIONS = [
   `ALTER TABLE gd_transcripts ADD COLUMN user_id              INTEGER`,
   `ALTER TABLE performance ADD COLUMN room_id                 TEXT`,
   `ALTER TABLE performance ADD COLUMN user_name               TEXT`,
+  `ALTER TABLE human_rooms ADD COLUMN gd_deadline            DATETIME`,
 ];
 
 for (const sql of MIGRATIONS) {
