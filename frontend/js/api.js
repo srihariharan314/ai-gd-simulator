@@ -212,15 +212,18 @@ const Performance = {
     return apiFetch('/performance/stats');
   },
 
-  async getSession(sessionId) {
-    return apiFetch(`/performance/${sessionId}`);
+  async getSession(sessionId, userId) {
+    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    return apiFetch(`/performance/${encodeURIComponent(sessionId)}${q}`);
   }
 };
 
 // ─── UTILITIES ──────────────────────────────────────────────
 function requireAuth() {
   if (!Auth.isLoggedIn()) {
-    window.location.href = '/index.html';
+    const currentLoc = window.location.pathname + window.location.search;
+    const returnUrl = encodeURIComponent(currentLoc);
+    window.location.href = `/index.html?returnUrl=${returnUrl}`;
     return false;
   }
   return true;

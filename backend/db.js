@@ -199,6 +199,9 @@ const MIGRATIONS = [
   `ALTER TABLE performance ADD COLUMN room_id                 TEXT`,
   `ALTER TABLE performance ADD COLUMN user_name               TEXT`,
   `ALTER TABLE human_rooms ADD COLUMN gd_deadline            DATETIME`,
+  `ALTER TABLE human_rooms ADD COLUMN session_id             INTEGER`,
+  `ALTER TABLE human_rooms ADD COLUMN gd_started_at          DATETIME`,
+  `ALTER TABLE human_rooms ADD COLUMN joining_started_at     DATETIME`,
 ];
 
 for (const sql of MIGRATIONS) {
@@ -207,6 +210,84 @@ for (const sql of MIGRATIONS) {
   } catch (_) {
     // Column already exists — silently skip
   }
+}
+
+// Ensure performance table supports multiple participant evaluations per shared session_id
+try {
+  const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='performance'").get()?.sql || '';
+  if (tableSql.includes('session_id           INTEGER UNIQUE') || tableSql.includes('session_id INTEGER UNIQUE')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS performance_migrated (
+        performance_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id           INTEGER NOT NULL REFERENCES gd_sessions(session_id) ON DELETE CASCADE,
+        user_id              INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        communication_score  REAL DEFAULT 0,
+        fluency_score        REAL DEFAULT 0,
+        vocabulary_score     REAL DEFAULT 0,
+        content_score        REAL DEFAULT 0,
+        confidence_score     REAL DEFAULT 0,
+        leadership_score     REAL DEFAULT 0,
+        teamwork_score       REAL DEFAULT 0,
+        critical_thinking    REAL DEFAULT 0,
+        overall_score        REAL DEFAULT 0,
+        strengths            TEXT DEFAULT '[]',
+        improvements         TEXT DEFAULT '[]',
+        recommendations      TEXT DEFAULT '[]',
+        full_feedback        TEXT DEFAULT '',
+        filler_word_count    INTEGER DEFAULT 0,
+        total_words          INTEGER DEFAULT 0,
+        speaking_turns       INTEGER DEFAULT 0,
+        participation_score  REAL DEFAULT 0,
+        relevance_score      REAL DEFAULT 0,
+        listening_score      REAL DEFAULT 0,
+        conclusion_score     REAL DEFAULT 0,
+        speaking_time_seconds    INTEGER DEFAULT 0,
+        meaningful_contributions INTEGER DEFAULT 0,
+        interruptions            INTEGER DEFAULT 0,
+        repeated_points          INTEGER DEFAULT 0,
+        responses_to_others      INTEGER DEFAULT 0,
+        questions_asked          INTEGER DEFAULT 0,
+        topic_deviations         INTEGER DEFAULT 0,
+        evidence                 TEXT DEFAULT '[]',
+        practice_plan            TEXT DEFAULT '[]',
+        placement_readiness      TEXT DEFAULT '',
+        improvement_suggestions  TEXT DEFAULT '[]',
+        score_projection         TEXT DEFAULT '{}',
+        room_id                  TEXT,
+        user_name                TEXT,
+        created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(session_id, user_id)
+      );
+    `);
+    db.exec(`
+      INSERT OR IGNORE INTO performance_migrated (
+        performance_id, session_id, user_id, communication_score, fluency_score, vocabulary_score,
+        content_score, confidence_score, leadership_score, teamwork_score, critical_thinking,
+        overall_score, strengths, improvements, recommendations, full_feedback,
+        filler_word_count, total_words, speaking_turns, participation_score, relevance_score,
+        listening_score, conclusion_score, speaking_time_seconds, meaningful_contributions,
+        interruptions, repeated_points, responses_to_others, questions_asked, topic_deviations,
+        evidence, practice_plan, placement_readiness, improvement_suggestions, score_projection,
+        room_id, user_name, created_at
+      )
+      SELECT 
+        performance_id, session_id, user_id, communication_score, fluency_score, vocabulary_score,
+        content_score, confidence_score, leadership_score, teamwork_score, critical_thinking,
+        overall_score, strengths, improvements, recommendations, full_feedback,
+        filler_word_count, total_words, speaking_turns, participation_score, relevance_score,
+        listening_score, conclusion_score, speaking_time_seconds, meaningful_contributions,
+        interruptions, repeated_points, responses_to_others, questions_asked, topic_deviations,
+        evidence, practice_plan, placement_readiness, improvement_suggestions, score_projection,
+        room_id, user_name, created_at
+      FROM performance;
+    `);
+    db.exec('DROP TABLE performance;');
+    db.exec('ALTER TABLE performance_migrated RENAME TO performance;');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_performance_user ON performance(user_id);');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_performance_session_user ON performance(session_id, user_id);');
+  }
+} catch (migErr) {
+  console.warn('Performance table migration note:', migErr.message);
 }
 
 // Ensure default demo user exists (especially on fresh serverless /tmp databases)

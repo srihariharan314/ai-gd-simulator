@@ -129,24 +129,24 @@ async function runTests() {
     const joinRes = await apiPost(`/api/rooms/${createdRoom.room_id}/join`, {}, part1Token);
     assert(joinRes.status === 200, 'Participant joins successfully');
     assert(joinRes.data.participant && joinRes.data.participant.role === 'participant', 'Participant role is participant');
-    assert(joinRes.data.session && joinRes.data.session.session_id !== hostSession.session_id, 'Participant gets distinct personal session_id');
+    assert(joinRes.data.session && joinRes.data.session.session_id === hostSession.session_id, 'All users share the exact same session_id for Human GD');
 
-    const part1Session = joinRes.data.session;
+    const sharedSession = joinRes.data.session;
 
     // ─────────────────────────────────────────────────────────────
-    // TEST 3 — Direct join link redirect (/gd/join/:code)
+    // TEST 3 — Direct join link redirect (/human-gd/join/:code and /gd/join/:code)
     // ─────────────────────────────────────────────────────────────
     console.log('\n--- TEST 3: Direct join link redirect ---');
-    const directJoinRes = await apiGet(`/gd/join/${createdRoom.room_code}`);
-    assert(directJoinRes.status === 302, 'HTTP 302 redirect for /gd/join/:code');
+    const directJoinRes = await apiGet(`/human-gd/join/${createdRoom.room_code}`);
+    assert(directJoinRes.status === 302, 'HTTP 302 redirect for /human-gd/join/:code');
     assert(directJoinRes.location && directJoinRes.location.includes(`roomCode=${createdRoom.room_code}`), `Redirects to human-room.html with roomCode`);
 
     // ─────────────────────────────────────────────────────────────
     // TEST 4 — WhatsApp invitation formatting
     // ─────────────────────────────────────────────────────────────
     console.log('\n--- TEST 4: WhatsApp invitation message formatting ---');
-    const waUrl = `${baseUrl}/gd/join/${createdRoom.room_code}`;
-    const expectedWaMsg = `You're invited to join a Group Discussion!\n\nTopic:\n${createdRoom.topic}\n\nGD Code:\n${createdRoom.room_code}\n\nJoin the discussion:\n${waUrl}\n\nPlease join before the joining time expires.`;
+    const waUrl = `${baseUrl}/human-gd/join/${createdRoom.room_code}`;
+    const expectedWaMsg = `Join my IntelliGD Human Group Discussion.\n\nRoom Code: ${createdRoom.room_code}\n\nJoin here: ${waUrl}`;
     const encodedWa = encodeURIComponent(expectedWaMsg);
     assert(encodedWa.includes(encodeURIComponent(createdRoom.room_code)), 'WhatsApp message correctly encodes room code');
     assert(encodedWa.includes(encodeURIComponent(waUrl)), 'WhatsApp message includes direct join URL');
@@ -319,8 +319,8 @@ async function runTests() {
     assert(completedDbRoom.status === 'COMPLETED', 'Database human_rooms marked COMPLETED');
 
     // Check performance records for each participant
-    const hostPerf = db.prepare('SELECT * FROM performance WHERE session_id = ?').get(hostSession.session_id);
-    const part1Perf = db.prepare('SELECT * FROM performance WHERE session_id = ?').get(part1Session.session_id);
+    const hostPerf = db.prepare('SELECT * FROM performance WHERE session_id = ? AND user_id = ?').get(hostSession.session_id, hostId);
+    const part1Perf = db.prepare('SELECT * FROM performance WHERE session_id = ? AND user_id = ?').get(hostSession.session_id, part1Id);
 
     assert(hostPerf !== undefined, `Host evaluation recorded in performance table (Overall: ${hostPerf?.overall_score})`);
     assert(part1Perf !== undefined, `Participant 1 evaluation recorded in performance table (Overall: ${part1Perf?.overall_score})`);
@@ -333,7 +333,7 @@ async function runTests() {
     assert(hostResultsRes.data.participants.length >= 2, 'Host sees scoreboard for all participants in the room');
 
     // Participant individual report check (Section 28)
-    const part1PerfRes = await apiGet(`/api/performance/${part1Session.session_id}`, part1Token);
+    const part1PerfRes = await apiGet(`/api/performance/${hostSession.session_id}`, part1Token);
     assert(part1PerfRes.status === 200, 'Participant can retrieve personal performance report');
     assert(part1PerfRes.data.performance.user_id === part1Id, 'Participant only receives their own performance data');
 

@@ -307,6 +307,8 @@
     { label: 'Conclusion',         icon: '📌', key: 'conclusion_score',     color: '#a78bfa', weight: '5%',  desc: 'Summarizing key discussion points' },
   ];
 
+  let selectedUserId = null;
+
   function renderHostScoreboard(roomRes) {
     const sec = document.getElementById('host-summary-section');
     if (!sec) return;
@@ -318,16 +320,18 @@
       meta.textContent = `Topic: "${roomRes.room.topic || 'Group Discussion'}" · Duration: ${dur} · ${(roomRes.participants || []).length} Participant(s)`;
     }
 
+    const currentUser = AppUtils.getUser();
     const table = document.getElementById('host-participants-table');
     if (table && roomRes.participants) {
       table.innerHTML = roomRes.participants.map(p => {
         const score = Math.round(p.overall_score || 0);
         const color = AppUtils.getScoreColor(score);
-        const isCurrent = p.session_id && String(p.session_id) === String(sessionId);
+        const isCurrent = (selectedUserId && String(p.user_id) === String(selectedUserId)) ||
+                          (!selectedUserId && currentUser && String(p.user_id) === String(currentUser.user_id));
 
         return `
           <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:${isCurrent ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${isCurrent ? 'rgba(52,211,153,0.45)' : 'rgba(255,255,255,0.08)'}; border-radius:12px; transition:all 0.2s; cursor:pointer"
-               onclick="switchParticipantReport('${p.session_id}')"
+               onclick="switchParticipantReport('${p.session_id || sessionId || ''}', '${p.user_id || ''}')"
                title="Click to view detailed report for ${p.name}">
             <div style="display:flex; align-items:center; gap:12px">
               <div style="width:38px; height:38px; border-radius:50%; background:${color}20; color:${color}; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1rem; border:1.5px solid ${color}">
@@ -359,12 +363,13 @@
     }
   }
 
-  function switchParticipantReport(newSessionId) {
-    if (!newSessionId || newSessionId === 'undefined' || newSessionId === 'null') {
-      AppUtils.showToast('No detailed session evaluation recorded for this participant yet.', 'info');
-      return;
+  function switchParticipantReport(newSessionId, newUserId) {
+    if (newSessionId && newSessionId !== 'undefined' && newSessionId !== 'null') {
+      sessionId = newSessionId;
     }
-    sessionId = newSessionId;
+    if (newUserId && newUserId !== 'undefined' && newUserId !== 'null') {
+      selectedUserId = newUserId;
+    }
     loadResults();
   }
 
@@ -389,20 +394,19 @@
       }
     }
 
-    if (!sessionId) {
-      if (roomRes && roomRes.isHost) {
-        // Host has room scoreboard, reveal content
-        document.getElementById('loading-state').style.display = 'none';
-        document.getElementById('results-content').style.display = 'block';
-        return;
-      }
+    if (!sessionId && !roomId) {
       window.location.href = '/history.html';
       return;
     }
 
     try {
-      const data = await API.Performance.getSession(sessionId);
+      const data = await API.Performance.getSession(sessionId || roomId, selectedUserId);
       if (!data || !data.performance) {
+        if (roomRes && roomRes.isHost) {
+          document.getElementById('loading-state').style.display = 'none';
+          document.getElementById('results-content').style.display = 'block';
+          return;
+        }
         throw new Error('Evaluation record not ready yet.');
       }
       const { performance: perf, transcript } = data;

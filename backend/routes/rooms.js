@@ -49,12 +49,22 @@ function findRoom(identifier) {
   if (!identifier) return null;
   const raw = String(identifier).trim();
   const upper = raw.toUpperCase();
-  const alphanumericOnly = upper.replace(/[^A-Z0-9]/g, '');
+  const withoutHyphen = upper.replace(/[^A-Z0-9]/g, '');
 
   let room = db.prepare(`
-    SELECT * FROM human_rooms
-    WHERE room_id = ? OR room_code = ? OR room_code = ? OR room_id = ?
-  `).get(raw, upper, alphanumericOnly, upper);
+    SELECT hr.*, COALESCE(hr.session_id, s.session_id) as shared_session_id
+    FROM human_rooms hr
+    LEFT JOIN gd_sessions s ON (hr.room_id = s.room_id AND s.mode = 'human')
+    WHERE hr.room_id = ? 
+       OR hr.room_code = ? 
+       OR REPLACE(UPPER(hr.room_code), '-', '') = ?
+       OR UPPER(hr.room_id) = ?
+    ORDER BY hr.created_at DESC LIMIT 1
+  `).get(raw, upper, withoutHyphen, upper);
+
+  if (room && !room.session_id && room.shared_session_id) {
+    room.session_id = room.shared_session_id;
+  }
 
   return room || null;
 }
@@ -109,19 +119,19 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     const hostUserId = ensureUserExists(req.user.user_id, req.user.name, req.user.email);
 
-    // 1. Insert room record with authoritative host_id and join_deadline
-    db.prepare(`
-      INSERT INTO human_rooms
-      (room_id, room_code, host_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP)
-    `).run(roomId, roomCode, hostUserId, cleanTopic, category, topicContent, joinSec, joinDeadline, gdSec, maxPart);
-
-    // 2. Create host's personal session in gd_sessions
+    // 1. Create exactly ONE shared session in gd_sessions for this Human GD
     const sessionRes = db.prepare(`
       INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
       VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
     `).run(hostUserId, cleanTopic, category, roomId);
     const hostSessionId = sessionRes.lastInsertRowid;
+
+    // 2. Insert room record with authoritative host_id, join_deadline, and session_id
+    db.prepare(`
+      INSERT INTO human_rooms
+      (room_id, room_code, host_id, session_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, joining_started_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(roomId, roomCode, hostUserId, hostSessionId, cleanTopic, category, topicContent, joinSec, joinDeadline, gdSec, maxPart);
 
     // 3. Register host as first participant with role: 'host'
     const hostName = req.user.name || 'Host';
@@ -384,8 +394,9 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
       WHERE id = ?
     `).run(role, participant.id);
 
-    if (participant.session_id) {
-      session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(participant.session_id);
+    const sId = participant.session_id || room.session_id;
+    if (sId) {
+      session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(sId);
     }
   } else {
     // New participant joining
@@ -413,21 +424,23 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
 
     const validUserId = ensureUserExists(userId, userName, req.user?.email);
 
-    // Create a personal session for this participant in gd_sessions
-    const sessionRes = db.prepare(`
-      INSERT INTO gd_sessions (user_id, mode, topic, category, room_id, start_time, status)
-      VALUES (?, 'human', ?, ?, ?, CURRENT_TIMESTAMP, 'active')
-    `).run(validUserId, room.topic, room.category || 'General', room.room_id);
+    // Retrieve the existing single session for this Human GD
+    let sharedSessionId = room.session_id;
+    if (!sharedSessionId) {
+      const existingSession = db.prepare('SELECT session_id FROM gd_sessions WHERE room_id = ? ORDER BY session_id ASC LIMIT 1').get(room.room_id);
+      if (existingSession) sharedSessionId = existingSession.session_id;
+    }
 
-    const sessionId = sessionRes.lastInsertRowid;
-    session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(sessionId);
+    if (sharedSessionId) {
+      session = db.prepare('SELECT * FROM gd_sessions WHERE session_id = ?').get(sharedSessionId);
+    }
 
-    // Register participant with authoritative role derived from room.host_id
+    // Register participant referencing the single shared session
     const partRes = db.prepare(`
       INSERT INTO room_participants
       (room_id, user_id, name, role, is_muted, connection_status, session_id, joined_at)
       VALUES (?, ?, ?, ?, 0, 'connected', ?, CURRENT_TIMESTAMP)
-    `).run(room.room_id, validUserId, userName, role, sessionId);
+    `).run(room.room_id, validUserId, userName, role, sharedSessionId || null);
 
     participant = db.prepare('SELECT * FROM room_participants WHERE id = ?').get(partRes.lastInsertRowid);
   }
@@ -470,7 +483,7 @@ router.post('/:roomId/start', authMiddleware, (req, res) => {
   const gdDeadline = new Date(Date.now() + (room.gd_duration || 300) * 1000).toISOString();
 
   try {
-    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
+    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
       .run(gdDeadline, room.room_id);
   } catch (err) {
     console.warn('Error starting room in DB:', err.message);

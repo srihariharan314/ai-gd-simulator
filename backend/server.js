@@ -34,8 +34,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 // ─── JOIN LINK REDIRECT ───────────────────────────────────────────────────────
-// Support friendly WhatsApp & invite links: /gd/join/:code and /join/:code
-app.get(['/gd/join/:code', '/join/:code'], (req, res) => {
+// Support friendly WhatsApp & invite links: /human-gd/join/:code, /gd/join/:code and /join/:code
+app.get(['/human-gd/join/:code', '/gd/join/:code', '/join/:code'], (req, res) => {
   const code = encodeURIComponent(req.params.code || '');
   res.redirect(`/human-room.html?action=join&roomCode=${code}`);
 });
@@ -153,7 +153,7 @@ function startRoomDiscussion(roomId, reason = 'Discussion started!') {
 
   // Update Database
   try {
-    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
+    db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?")
       .run(gdDeadline, room.roomId);
   } catch (e) {
     console.error('Error updating human_rooms to ACTIVE:', e.message);
@@ -236,21 +236,20 @@ async function evaluateAllParticipants(roomId) {
       SELECT * FROM room_participants WHERE room_id = ?
     `).all(roomId);
 
+    let sharedSessionId = room.session_id;
+    if (!sharedSessionId) {
+      const sess = db.prepare('SELECT session_id FROM gd_sessions WHERE room_id = ? ORDER BY session_id ASC LIMIT 1').get(roomId);
+      if (sess) sharedSessionId = sess.session_id;
+    }
+
     for (const p of participants) {
       if (!p.user_id) continue;
 
-      // Check if session exists
-      let sessionId = p.session_id;
-      if (!sessionId) {
-        const sess = db.prepare(`
-          SELECT session_id FROM gd_sessions WHERE room_id = ? AND user_id = ? ORDER BY session_id DESC LIMIT 1
-        `).get(roomId, p.user_id);
-        if (sess) sessionId = sess.session_id;
-      }
+      let sessionId = p.session_id || sharedSessionId;
       if (!sessionId) continue;
 
-      // Skip if already evaluated
-      const existingPerf = db.prepare('SELECT performance_id FROM performance WHERE session_id = ?').get(sessionId);
+      // Skip if already evaluated for this exact user
+      const existingPerf = db.prepare('SELECT performance_id FROM performance WHERE session_id = ? AND user_id = ?').get(sessionId, p.user_id);
       if (existingPerf) continue;
 
       try {

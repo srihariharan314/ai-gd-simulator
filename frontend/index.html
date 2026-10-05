@@ -239,8 +239,14 @@
 
 <script src="/js/api.js"></script>
 <script>
+  const urlParams = new URLSearchParams(window.location.search);
+  const rawReturnUrl = urlParams.get('returnUrl') || urlParams.get('redirect');
+  const targetDestination = rawReturnUrl ? decodeURIComponent(rawReturnUrl) : '/dashboard.html';
+
   // Redirect if already logged in
-  if (API.Auth.isLoggedIn()) window.location.href = '/dashboard.html';
+  if (API.Auth.isLoggedIn()) {
+    window.location.href = targetDestination;
+  }
 
   function switchTab(tab) {
     ['login', 'register'].forEach(t => {
@@ -261,7 +267,7 @@
     try {
       await API.Auth.login(email, password);
       AppUtils.showToast('Welcome back! 🎉', 'success');
-      setTimeout(() => window.location.href = '/dashboard.html', 800);
+      setTimeout(() => window.location.href = targetDestination, 800);
     } catch (err) {
       AppUtils.showToast(err.message, 'error');
       btn.innerHTML = '<span>Login</span>';
@@ -282,7 +288,7 @@
     try {
       await API.Auth.register(name, email, password);
       AppUtils.showToast('Account created! Welcome to GD Simulator! 🎉', 'success');
-      setTimeout(() => window.location.href = '/dashboard.html', 800);
+      setTimeout(() => window.location.href = targetDestination, 800);
     } catch (err) {
       AppUtils.showToast(err.message, 'error');
       btn.innerHTML = '<span>Create Account</span>';

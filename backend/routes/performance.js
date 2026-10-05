@@ -82,14 +82,18 @@ router.get('/stats', authMiddleware, (req, res) => {
 
 // ─── GET /api/performance/:sessionId ────────────────────────────────────────
 router.get('/:sessionId', authMiddleware, (req, res) => {
+  const targetUserId = req.query.userId ? parseInt(req.query.userId, 10) : req.user.user_id;
+
   // Allow if user owns the session OR if user is host of the room
   const perf = db.prepare(`
     SELECT p.*, s.topic, s.mode, s.category, s.duration, s.created_at, s.room_id
     FROM performance p
     JOIN gd_sessions s ON p.session_id = s.session_id
-    LEFT JOIN human_rooms hr ON s.room_id = hr.room_id
-    WHERE p.session_id = ? AND (p.user_id = ? OR hr.host_id = ?)
-  `).get(req.params.sessionId, req.user.user_id, req.user.user_id);
+    LEFT JOIN human_rooms hr ON (s.room_id = hr.room_id OR p.room_id = hr.room_id)
+    WHERE (p.session_id = ? OR p.room_id = ?) AND (p.user_id = ? OR hr.host_id = ?)
+    ORDER BY (p.user_id = ?) DESC, p.performance_id DESC
+    LIMIT 1
+  `).get(req.params.sessionId, req.params.sessionId, targetUserId, req.user.user_id, targetUserId);
 
   if (!perf) {
     return res.status(404).json({ error: 'Performance record not found.' });

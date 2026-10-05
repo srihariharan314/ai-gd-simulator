@@ -142,6 +142,35 @@ const HumanRoom = (() => {
   }
 
   // ─── INITIALIZATION ────────────────────────────────────────────────────────
+  function getProductionJoinUrl(code) {
+    const c = code || roomCode || roomId;
+    const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : 'https://ai-gd-simulator.vercel.app';
+    return `${origin}/human-gd/join/${encodeURIComponent(c)}`;
+  }
+
+  function showRoomError(title, message, errorType = 'not_found') {
+    const lobbySection = document.getElementById('lobby-section');
+    const activeSection = document.getElementById('active-discussion-section');
+    const completedSection = document.getElementById('completed-section');
+    if (activeSection) activeSection.style.display = 'none';
+    if (completedSection) completedSection.style.display = 'none';
+    if (lobbySection) {
+      lobbySection.style.display = 'block';
+      lobbySection.innerHTML = `
+        <div class="lobby-wrapper" style="text-align:center; padding:48px 32px; border-color:rgba(239,68,68,0.4); box-shadow:0 0 40px rgba(239,68,68,0.1)">
+          <div style="font-size:3.2rem; margin-bottom:12px">⚠️</div>
+          <h1 style="font-size:1.75rem; font-weight:900; color:#f87171; margin-bottom:8px">${title}</h1>
+          <p style="font-size:0.95rem; color:var(--text-secondary); max-width:480px; margin:0 auto 24px; line-height:1.6">${message}</p>
+          <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap">
+            <a href="/select-mode.html" class="btn btn-primary" style="padding:12px 24px">Join Another GD</a>
+            <a href="/dashboard.html" class="btn btn-secondary" style="padding:12px 24px">Dashboard</a>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // ─── INITIALIZATION ────────────────────────────────────────────────────────
   async function init() {
     if (!AppUtils.requireAuth()) return;
 
@@ -159,27 +188,9 @@ const HumanRoom = (() => {
     sessionId = params.get('session');
 
     // Initial placeholder values before server response
-    roomCode = queryRoomCode || queryRoomId || 'GD-LIVE';
-    roomId = queryRoomId || ('room_' + roomCode);
-    topic = queryTopic || 'AI: Boon or Bane?';
-
-    // Start with isHost = false until verified by server
-    isHost = false;
-    roomHostId = null;
-
-    participants = [{
-      userId,
-      name: userName,
-      role: 'participant',
-      isConnected: true,
-      isMuted: false,
-      isSpeaking: false
-    }];
-
-    updateHeaderInfo();
-    setupUIEventListeners();
-    switchViewToLobby();
-    renderParticipants();
+    roomCode = queryRoomCode || queryRoomId || '';
+    roomId = queryRoomId || (roomCode ? 'room_' + roomCode : '');
+    topic = queryTopic || '';
 
     const identifier = queryRoomCode || queryRoomId;
 
@@ -189,7 +200,7 @@ const HumanRoom = (() => {
     }
 
     try {
-      // 2. Room lookup or creation
+      // 2. Room lookup, creation, or validation
       let roomData = null;
 
       if (action === 'create' && !queryRoomId) {
@@ -206,14 +217,46 @@ const HumanRoom = (() => {
             roomId = roomData.room_id;
             roomCode = roomData.room_code;
             topic = roomData.topic;
-            sessionId = createRes.session?.session_id;
+            sessionId = createRes.session?.session_id || roomData.session_id;
             roomHostId = roomData.host_id;
+          } else {
+            throw new Error(createRes.error || 'Failed to create room');
           }
         } catch (createErr) {
           console.error('Room creation error:', createErr);
-          AppUtils.showToast(createErr.message || 'Could not create room', 'error');
+          showRoomError('Could Not Create Room', createErr.message || 'Server was unable to create the GD room.');
+          return;
         }
       } else if (identifier) {
+        // Validate room first before attempting to join or display
+        try {
+          const validation = await API.Rooms.validate(identifier, topic);
+          if (!validation || !validation.valid) {
+            const reason = validation?.reason || 'not_found';
+            if (reason === 'not_found') {
+              showRoomError('Room not found', `The room code "<strong>${escapeHtml(identifier)}</strong>" does not exist. Please check your room code and try again.`);
+            } else if (reason === 'expired') {
+              showRoomError('Joining has ended', 'Joining has ended for this Group Discussion. No new participants are being accepted.');
+            } else if (reason === 'already_started') {
+              showRoomError('Discussion In Progress', 'This Group Discussion has already started. New participants cannot join.');
+            } else if (reason === 'completed') {
+              showRoomError('Discussion Ended', 'This Group Discussion has already completed.');
+            } else if (reason === 'full') {
+              showRoomError('Room Full', 'This Group Discussion has reached its maximum participant limit.');
+            } else {
+              showRoomError('Cannot Join Room', validation?.error || 'Unable to join this Group Discussion.');
+            }
+            return;
+          }
+
+          if (validation.room) {
+            roomData = validation.room;
+          }
+        } catch (valErr) {
+          console.warn('Validate check notice:', valErr.message);
+        }
+
+        // Fetch complete room details
         try {
           const getRes = await API.Rooms.get(identifier, topic);
           if (getRes && getRes.room) {
@@ -238,9 +281,13 @@ const HumanRoom = (() => {
         }
       } catch (joinErr) {
         console.warn('Join registration notice:', joinErr.message);
+        if (joinErr.message && (joinErr.message.includes('ended') || joinErr.message.includes('started') || joinErr.message.includes('not found') || joinErr.message.includes('full'))) {
+          showRoomError('Unable to Join', joinErr.message);
+          return;
+        }
       }
 
-      // 4. Update authoritative state from roomData
+      // 4. Update authoritative state strictly from server roomData
       if (roomData) {
         roomId = roomData.room_id || roomId;
         roomCode = roomData.room_code || roomCode;
@@ -252,13 +299,18 @@ const HumanRoom = (() => {
         joinDeadline = roomData.join_deadline;
         gdDeadline = roomData.gd_deadline;
         roomHostId = roomData.host_id;
+        sessionId = roomData.session_id || sessionId;
 
-        // Authoritative Host Check: only if user_id equals room.host_id
+        // Authoritative Host Check: strictly database user_id === room.host_id
         isHost = (userId !== null && userId !== undefined && roomHostId !== null && Number(userId) === Number(roomHostId));
+      } else {
+        showRoomError('Room not found', 'Could not load the requested Group Discussion room.');
+        return;
       }
 
       // 5. Render view and start synchronized timer
       updateHeaderInfo();
+      setupUIEventListeners();
       renderParticipants();
       renderTopicBriefing();
 
@@ -281,12 +333,9 @@ const HumanRoom = (() => {
 
     } catch (err) {
       console.error('Human room initialization error:', err);
-      updateHeaderInfo();
-      renderParticipants();
-      switchViewToLobby();
-      connectSocket();
-      startPeriodicSync();
+      showRoomError('Room Error', err.message || 'An error occurred while loading the room.');
     }
+  }
   }
 
   // ─── PERIODIC SYNC LOOP (REAL-TIME POLLING FALLBACK) ───────────────────────
@@ -537,9 +586,8 @@ const HumanRoom = (() => {
       if (el) el.textContent = roomCode || roomId || '——';
     });
 
-    // Joining Link using production base URL
-    const baseUrl = getProductionBaseUrl();
-    const directJoinUrl = `${baseUrl}/gd/join/${encodeURIComponent(roomCode || roomId || '')}`;
+    // Joining Link using production join URL
+    const directJoinUrl = getProductionJoinUrl(roomCode || roomId);
     const linkInputs = ['lobby-join-link-input', 'modal-share-link'];
     linkInputs.forEach(id => {
       const el = document.getElementById(id);
@@ -1023,41 +1071,40 @@ const HumanRoom = (() => {
   function copyRoomCode() {
     const code = roomCode || roomId;
     if (!code) return;
-    navigator.clipboard.writeText(code).then(() => {
-      AppUtils.showToast(`✓ Room Code "${code}" copied to clipboard!`, 'success');
-    }).catch(() => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(() => {
+        AppUtils.showToast(`✓ Room Code "${code}" copied to clipboard!`, 'success');
+      }).catch(() => {
+        AppUtils.showToast(`Room Code: ${code}`, 'info');
+      });
+    } else {
       AppUtils.showToast(`Room Code: ${code}`, 'info');
-    });
+    }
   }
 
   function copyJoinLink() {
-    const baseUrl = getProductionBaseUrl();
-    const url = `${baseUrl}/gd/join/${encodeURIComponent(roomCode || roomId)}`;
-    navigator.clipboard.writeText(url).then(() => {
-      AppUtils.showToast('✓ Production join link copied to clipboard! 🔗', 'success');
-    }).catch(() => {
+    const url = getProductionJoinUrl(roomCode || roomId);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(() => {
+        AppUtils.showToast('✓ Production join link copied to clipboard! 🔗', 'success');
+      }).catch(() => {
+        AppUtils.showToast(`Join URL: ${url}`, 'info');
+      });
+    } else {
       AppUtils.showToast(`Join URL: ${url}`, 'info');
-    });
+    }
   }
 
   function shareViaWhatsApp() {
     const code = roomCode || roomId;
-    const baseUrl = getProductionBaseUrl();
-    const url = `${baseUrl}/gd/join/${encodeURIComponent(code)}`;
+    const url = getProductionJoinUrl(code);
 
     const message =
-`You're invited to join a Group Discussion!
+`Join my IntelliGD Human Group Discussion.
 
-Topic:
-${topic || 'Group Discussion'}
+Room Code: ${code}
 
-GD Code:
-${code}
-
-Join the discussion:
-${url}
-
-Please join before the joining time expires.`;
+Join here: ${url}`;
 
     const encoded = encodeURIComponent(message);
     window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
@@ -1082,6 +1129,12 @@ Please join before the joining time expires.`;
 
   return {
     init,
+    startDiscussion,
+    endDiscussion,
+    cancelRoom: () => {
+      const btn = document.getElementById('btn-lobby-cancel');
+      if (btn) btn.click();
+    },
     copyRoomCode,
     copyJoinLink,
     shareViaWhatsApp,
