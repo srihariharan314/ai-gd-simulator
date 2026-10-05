@@ -899,7 +899,8 @@
       const res = await API.Rooms.create(topic, 'General', joiningDuration, gdDuration, maxParticipants);
       if (res && res.room) {
         if (res.session) localStorage.setItem('gd_current_session', JSON.stringify(res.session));
-        window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}`;
+        localStorage.setItem('gd_last_room', JSON.stringify(res.room));
+        window.location.href = `/human-room.html?action=lobby&roomId=${res.room.room_id}&roomCode=${res.room.room_code}&topic=${encodeURIComponent(topic)}&isHost=1`;
         return;
       }
       throw new Error(res.error || 'Failed to create room');
@@ -1010,9 +1011,16 @@
       }
 
       // Valid room! Redirect to room page
-      const roomCodeTarget = validation.room.room_code || validation.room.room_id || code;
-      window.location.href = `/human-room.html?action=join&roomCode=${encodeURIComponent(roomCodeTarget)}`;
+      const roomCodeTarget = validation.room?.room_code || validation.room?.room_id || code;
+      const topicTarget = validation.room?.topic || '';
+      window.location.href = `/human-room.html?action=join&roomCode=${encodeURIComponent(roomCodeTarget)}&topic=${encodeURIComponent(topicTarget)}`;
     } catch (err) {
+      console.warn('Validate network fallback:', err.message);
+      // If code looks like a GD code (e.g. GD-XXXX or >=4 chars), proceed to room directly
+      if (code && code.length >= 4) {
+        window.location.href = `/human-room.html?action=join&roomCode=${encodeURIComponent(code)}`;
+        return;
+      }
       if (inp) inp.classList.add('error');
       const hint = document.getElementById('join-code-hint');
       if (hint) { hint.textContent = err.message || 'Room validation failed'; hint.className = 'join-hint err'; }

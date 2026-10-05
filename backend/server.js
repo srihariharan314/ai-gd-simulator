@@ -78,6 +78,10 @@ function getOrInitRoom(identifier) {
     dbRoom = db.prepare(`
       SELECT * FROM human_rooms WHERE room_code = ? OR room_id = ? OR room_id = ?
     `).get(upper, raw, upper);
+
+    if (!dbRoom && roomsRoutes && roomsRoutes.findOrSelfHealRoom) {
+      dbRoom = roomsRoutes.findOrSelfHealRoom(raw);
+    }
   } catch (e) {
     console.error('getOrInitRoom DB lookup error:', e.message);
   }

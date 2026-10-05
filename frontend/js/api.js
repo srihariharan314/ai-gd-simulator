@@ -285,16 +285,19 @@ const Rooms = {
     });
   },
 
-  async validate(code) {
-    return apiFetch(`/rooms/validate/${encodeURIComponent(code)}`);
+  async validate(code, topic = '') {
+    const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+    return apiFetch(`/rooms/validate/${encodeURIComponent(code)}${q}`);
   },
 
-  async get(roomId) {
-    return apiFetch(`/rooms/${encodeURIComponent(roomId)}`);
+  async get(roomId, topic = '') {
+    const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+    return apiFetch(`/rooms/${encodeURIComponent(roomId)}${q}`);
   },
 
-  async join(roomId) {
-    return apiFetch(`/rooms/${encodeURIComponent(roomId)}/join`, {
+  async join(roomId, topic = '') {
+    const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+    return apiFetch(`/rooms/${encodeURIComponent(roomId)}/join${q}`, {
       method: 'POST'
     });
   },

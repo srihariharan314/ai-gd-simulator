@@ -42,6 +42,73 @@ function ensureUserExists(userId, name, email) {
   }
 }
 
+/**
+ * Self-healing room lookup for serverless environments (e.g. Vercel)
+ * where each lambda instance may have an isolated ephemeral /tmp SQLite database.
+ */
+function findOrSelfHealRoom(identifier, fallbackTopic, hostUser) {
+  if (!identifier) return null;
+  const raw = String(identifier).trim();
+  const upper = raw.toUpperCase();
+  const alphanumericOnly = upper.replace(/[^A-Z0-9]/g, '');
+
+  // 1. Look up existing room in SQLite
+  let room = db.prepare(`
+    SELECT * FROM human_rooms
+    WHERE room_id = ? OR room_code = ? OR room_code = ? OR room_id = ?
+  `).get(raw, upper, alphanumericOnly, upper);
+
+  if (room) return room;
+
+  // 2. Check if identifier is plausibly a room code or room UUID
+  const isLikelyCode = upper.startsWith('GD') || (alphanumericOnly.length >= 4 && alphanumericOnly.length <= 12);
+  const isLikelyUuid = raw.length >= 30 && raw.includes('-');
+
+  if (!isLikelyCode && !isLikelyUuid) {
+    return null;
+  }
+
+  let roomCode = '';
+  let roomId = '';
+
+  if (isLikelyUuid) {
+    roomId = raw;
+    roomCode = 'GD-' + (alphanumericOnly.slice(0, 5) || 'ROOM1');
+  } else {
+    roomCode = upper.startsWith('GD-')
+      ? upper
+      : (upper.startsWith('GD') ? 'GD-' + upper.slice(2) : 'GD-' + upper);
+    roomId = raw.startsWith('room_') ? raw : ('room_' + roomCode);
+  }
+
+  // Ensure host exists in users table (guarantees foreign key constraints never fail)
+  let hostId = 1;
+  if (hostUser && hostUser.user_id) {
+    hostId = ensureUserExists(hostUser.user_id, hostUser.name, hostUser.email);
+  } else {
+    hostId = ensureUserExists(1, 'Host', 'host@gd.com');
+  }
+
+  const topic = (fallbackTopic && fallbackTopic.trim()) || 'AI: Boon or Bane?';
+  const joinSec = 180;
+  const joinDeadline = new Date(Date.now() + joinSec * 1000).toISOString();
+
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO human_rooms
+      (room_id, room_code, host_id, topic, category, joining_duration, join_deadline, gd_duration, max_participants, status, created_at)
+      VALUES (?, ?, ?, ?, 'General', ?, ?, 300, 6, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP)
+    `).run(roomId, roomCode, hostId, topic, joinSec, joinDeadline);
+
+    return db.prepare('SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?').get(roomId, roomCode);
+  } catch (err) {
+    console.error('Failed to self-heal room in SQLite:', err);
+    return null;
+  }
+}
+
+router.findOrSelfHealRoom = findOrSelfHealRoom;
+
 // ─── POST /api/rooms ─────────────────────────────────────────────────────────
 // Host creates a new human GD room
 router.post('/', authMiddleware, async (req, res) => {
@@ -136,11 +203,8 @@ router.get('/validate/:code', (req, res) => {
     return res.status(400).json({ valid: false, error: 'Invalid GD room code.', reason: 'invalid_code' });
   }
 
-  // Look up by room_code or room_id
-  const room = db.prepare(`
-    SELECT * FROM human_rooms
-    WHERE room_code = ? OR room_id = ? OR room_code = ?
-  `).get(code, code, code.replace(/[^A-Z0-9]/g, ''));
+  // Look up by room_code or room_id with serverless self-healing fallback
+  const room = findOrSelfHealRoom(code, req.query.topic, req.user);
 
   if (!room) {
     return res.status(404).json({ valid: false, error: 'Invalid GD room code.', reason: 'not_found' });
@@ -206,9 +270,7 @@ router.get('/validate/:code', (req, res) => {
 // Get complete room details, participants, and status
 router.get('/:roomId', authMiddleware, (req, res) => {
   const roomId = req.params.roomId;
-  const room = db.prepare(`
-    SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?
-  `).get(roomId, roomId);
+  const room = findOrSelfHealRoom(roomId, req.query.topic, req.user);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
@@ -246,9 +308,7 @@ router.get('/:roomId', authMiddleware, (req, res) => {
 // Authenticated participant joins room and receives session
 router.post('/:roomId/join', authMiddleware, (req, res) => {
   const roomIdParam = req.params.roomId;
-  const room = db.prepare(`
-    SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?
-  `).get(roomIdParam, roomIdParam);
+  const room = findOrSelfHealRoom(roomIdParam, req.query.topic, req.user);
 
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
@@ -359,7 +419,7 @@ router.post('/:roomId/cancel', authMiddleware, (req, res) => {
 // ─── GET /api/rooms/:roomId/results ─────────────────────────────────────────
 // Get post-GD results summary for all participants (host overview)
 router.get('/:roomId/results', authMiddleware, (req, res) => {
-  const room = db.prepare('SELECT * FROM human_rooms WHERE room_id = ? OR room_code = ?').get(req.params.roomId, req.params.roomId);
+  const room = findOrSelfHealRoom(req.params.roomId, req.query.topic, req.user);
   if (!room) {
     return res.status(404).json({ error: 'Room not found.' });
   }

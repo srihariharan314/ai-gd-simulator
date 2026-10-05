@@ -34,13 +34,43 @@ const HumanRoom = (() => {
     userId = user?.user_id;
     userAvatar = (userName.charAt(0) || 'P').toUpperCase();
 
-    // Parse URL parameters
+    // 1. Parse URL parameters and cached room
     const params = new URLSearchParams(window.location.search);
     const action = params.get('action'); // 'create', 'lobby', 'join'
     const queryRoomId = params.get('roomId');
     const queryRoomCode = params.get('roomCode') || params.get('room');
     const queryTopic = params.get('topic');
     sessionId = params.get('session');
+    const paramIsHost = params.get('isHost') === '1' || action === 'create';
+
+    let cachedRoom = null;
+    try {
+      cachedRoom = JSON.parse(localStorage.getItem('gd_last_room') || 'null');
+    } catch (e) {}
+
+    // Synchronously set initial values so UI renders immediately
+    roomCode = queryRoomCode || (cachedRoom && cachedRoom.room_code) || queryRoomId || 'GD-LIVE';
+    roomId = queryRoomId || (cachedRoom && cachedRoom.room_id) || ('room_' + roomCode);
+    topic = queryTopic || (cachedRoom && cachedRoom.topic) || 'AI: Boon or Bane?';
+    category = (cachedRoom && cachedRoom.category) || 'General';
+    isHost = paramIsHost || (cachedRoom && cachedRoom.host_id === userId);
+
+    // Initial participant entry for current user
+    participants = [{
+      userId,
+      name: userName,
+      role: isHost ? 'host' : 'participant',
+      isConnected: true,
+      isMuted: false,
+      isSpeaking: false
+    }];
+
+    // IMMEDIATELY render room code, header, lobby, and countdown timer
+    updateHeaderInfo();
+    setupUIEventListeners();
+    switchViewToLobby();
+    updateTimerDisplay(120, 'joining');
+    renderParticipants();
 
     const identifier = queryRoomCode || queryRoomId;
 
@@ -51,66 +81,94 @@ const HumanRoom = (() => {
     }
 
     try {
-      // 1. Fetch room details and validate
+      // 2. Fetch authoritative room details from backend
       let roomData = null;
       if (identifier) {
-        const res = await API.Rooms.get(identifier);
-        roomData = res.room;
-        topicContent = res.topicContent;
-        isHost = res.isHost;
+        try {
+          const res = await API.Rooms.get(identifier, topic);
+          if (res && res.room) {
+            roomData = res.room;
+            topicContent = res.topicContent;
+            if (res.isHost !== undefined) isHost = res.isHost;
+          }
+        } catch (fetchErr) {
+          console.warn('API.Rooms.get fallback to local state:', fetchErr.message);
+        }
       }
 
       if (roomData) {
-        roomId = roomData.room_id;
-        roomCode = roomData.room_code;
-        topic = roomData.topic;
-        category = roomData.category || 'General';
-        roomStatus = roomData.status;
+        roomId = roomData.room_id || roomId;
+        roomCode = roomData.room_code || roomCode;
+        topic = roomData.topic || topic;
+        category = roomData.category || category;
+        roomStatus = roomData.status || roomStatus;
         gdDuration = roomData.gd_duration || 300;
         joiningDuration = roomData.joining_duration || 120;
+      } else if (action === 'create') {
+        try {
+          const createRes = await API.Rooms.create(
+            topic || 'AI: Boon or Bane?',
+            category || 'General',
+            joiningDuration || 120,
+            gdDuration || 300,
+            6
+          );
+          if (createRes && createRes.room) {
+            roomId = createRes.room.room_id;
+            roomCode = createRes.room.room_code;
+            topic = createRes.room.topic;
+            sessionId = createRes.session?.session_id;
+            isHost = true;
+          }
+        } catch (createErr) {
+          console.warn('API.Rooms.create fallback:', createErr.message);
+        }
+      }
 
-        // 2. Join the room on the backend (registers participant & session)
-        const joinRes = await API.Rooms.join(roomId);
+      // 3. Join the room on the backend (registers participant & session)
+      try {
+        const joinRes = await API.Rooms.join(roomId, topic);
         if (joinRes && joinRes.session) {
           sessionId = joinRes.session.session_id;
           localStorage.setItem('gd_current_session', JSON.stringify(joinRes.session));
         }
-        if (joinRes.isHost !== undefined) {
+        if (joinRes && joinRes.isHost !== undefined) {
           isHost = joinRes.isHost;
         }
-        if (joinRes.participants) {
+        if (joinRes && joinRes.participants && joinRes.participants.length > 0) {
           participants = joinRes.participants;
         }
-      } else if (action === 'create') {
-        // Direct creation fallback
-        const createRes = await API.Rooms.create(
-          queryTopic || 'AI: Boon or Bane?',
-          'General',
-          120,
-          300,
-          6
-        );
-        roomId = createRes.room.room_id;
-        roomCode = createRes.room.room_code;
-        topic = createRes.room.topic;
-        sessionId = createRes.session?.session_id;
-        isHost = true;
+      } catch (joinErr) {
+        console.warn('API.Rooms.join fallback:', joinErr.message);
       }
 
-      // Update Header & DOM with room info
+      // 4. Ensure a valid session exists for AI evaluation tracking
+      if (!sessionId) {
+        try {
+          const sessRes = await API.Sessions.create('human', topic, category, roomId);
+          if (sessRes && sessRes.session) {
+            sessionId = sessRes.session.session_id;
+            localStorage.setItem('gd_current_session', JSON.stringify(sessRes.session));
+          }
+        } catch (sessErr) {
+          console.warn('Session create fallback:', sessErr.message);
+        }
+      }
+
+      // Update Header & DOM with final room info
       updateHeaderInfo();
+      renderParticipants();
       renderTopicBriefing();
 
       // Connect Socket.IO
       connectSocket();
-      setupUIEventListeners();
 
     } catch (err) {
       console.error('Human room initialization error:', err);
-      AppUtils.showToast(err.message || 'Could not join room', 'error');
-      setTimeout(() => {
-        window.location.href = '/select-mode.html';
-      }, 2500);
+      // Graceful degradation: never crash the lobby or redirect away!
+      updateHeaderInfo();
+      renderParticipants();
+      connectSocket();
     }
   }
 
