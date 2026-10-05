@@ -336,7 +336,6 @@ const HumanRoom = (() => {
       showRoomError('Room Error', err.message || 'An error occurred while loading the room.');
     }
   }
-  }
 
   // ─── PERIODIC SYNC LOOP (REAL-TIME POLLING FALLBACK) ───────────────────────
   function startPeriodicSync() {
