@@ -41,8 +41,8 @@ const HumanRoom = (() => {
     return 'https://ai-gd-simulator.vercel.app';
   }
 
-  // ─── SERVER-DEADLINE DRIVEN COUNTDOWN TIMER ───────────────────────────────
-  function syncDeadlineTimer(deadlineIso, timerType, fallbackDuration = 120) {
+  // ─── ACTIVE GD COUNTDOWN TIMER (FOR ACTIVE DISCUSSION ONLY) ───────────────────────────────
+  function syncDeadlineTimer(deadlineIso, fallbackDuration = 300) {
     if (timerInterval) clearInterval(timerInterval);
 
     function tick() {
@@ -54,22 +54,11 @@ const HumanRoom = (() => {
         remaining = Math.max(0, fallbackDuration);
       }
 
-      updateTimerDisplay(remaining, timerType);
+      updateTimerDisplay(remaining, 'gd');
 
       if (remaining <= 0) {
         clearInterval(timerInterval);
         timerInterval = null;
-        if (timerType === 'joining' && roomStatus === 'WAITING_FOR_PARTICIPANTS') {
-          console.log('⏰ Joining deadline reached. Checking auto-start...');
-          if (isHost) {
-            startDiscussion('Joining time expired. Discussion automatically started!');
-          }
-        } else if (timerType === 'gd' && roomStatus === 'ACTIVE') {
-          console.log('⏰ Discussion deadline reached. Concluding discussion...');
-          if (isHost) {
-            endDiscussion('Discussion time limit reached.');
-          }
-        }
       }
     }
 
@@ -79,6 +68,11 @@ const HumanRoom = (() => {
 
   // ─── START & END CONTROLS (SERVER-AUTHORITATIVE) ──────────────────────────
   async function startDiscussion(reason = 'Discussion started by host') {
+    // Only the host can start discussion
+    if (!isHost) {
+      console.warn('Unauthorized attempt: only host can start discussion');
+      return;
+    }
     if (roomStatus === 'ACTIVE' || roomStatus === 'COMPLETED') return;
     roomStatus = 'ACTIVE';
 
@@ -109,10 +103,11 @@ const HumanRoom = (() => {
     if (!gdDeadline) {
       gdDeadline = new Date(Date.now() + (gdDuration || 300) * 1000).toISOString();
     }
-    syncDeadlineTimer(gdDeadline, 'gd', gdDuration || 300);
+    syncDeadlineTimer(gdDeadline, gdDuration || 300);
   }
 
   async function endDiscussion(reason = 'Discussion ended.') {
+    // Only the host can end discussion (or system on room:ended event)
     if (roomStatus === 'COMPLETED') return;
     roomStatus = 'COMPLETED';
 
@@ -133,7 +128,7 @@ const HumanRoom = (() => {
     } catch (e) {}
 
     try {
-      if (API.Rooms && API.Rooms.end) {
+      if (isHost && API.Rooms && API.Rooms.end) {
         await API.Rooms.end(roomId);
       }
     } catch (e) {}
@@ -319,12 +314,11 @@ const HumanRoom = (() => {
         if (!gdDeadline && roomData?.started_at) {
           gdDeadline = new Date(new Date(roomData.started_at).getTime() + (gdDuration * 1000)).toISOString();
         }
-        syncDeadlineTimer(gdDeadline, 'gd', gdDuration || 300);
+        syncDeadlineTimer(gdDeadline, gdDuration || 300);
       } else if (roomStatus === 'COMPLETED') {
         switchViewToCompleted();
       } else {
         switchViewToLobby();
-        syncDeadlineTimer(joinDeadline, 'joining', joiningDuration || 120);
       }
 
       // Connect Socket & Start Sync Loop
@@ -357,7 +351,7 @@ const HumanRoom = (() => {
           if (roomStatus === 'ACTIVE') {
             switchViewToActive();
             gdDeadline = serverRoom.gd_deadline;
-            syncDeadlineTimer(gdDeadline, 'gd', serverRoom.gd_duration || 300);
+            syncDeadlineTimer(gdDeadline, serverRoom.gd_duration || 300);
           } else if (roomStatus === 'COMPLETED') {
             switchViewToCompleted();
           }
@@ -378,12 +372,6 @@ const HumanRoom = (() => {
               appendChatMessage(t.speaker, t.message, Number(t.user_id) === Number(userId), t.timestamp);
             }
           });
-        }
-
-        // Update timer if in lobby
-        if (roomStatus === 'WAITING_FOR_PARTICIPANTS' && serverRoom.join_deadline && serverRoom.join_deadline !== joinDeadline) {
-          joinDeadline = serverRoom.join_deadline;
-          syncDeadlineTimer(joinDeadline, 'joining', serverRoom.joining_duration || 120);
         }
       } catch (syncErr) {
         // Silently skip transient sync errors
@@ -432,9 +420,6 @@ const HumanRoom = (() => {
         switchViewToCompleted();
       } else {
         switchViewToLobby();
-        if (data.joiningTimerRemaining !== undefined) {
-          updateTimerDisplay(data.joiningTimerRemaining, 'joining');
-        }
       }
     });
 
@@ -442,15 +427,12 @@ const HumanRoom = (() => {
       AppUtils.showToast(data.message || 'Room notification', 'info');
     });
 
-    socket.on('room:joining_timer', (data) => {
-      if (data && data.remaining !== undefined) {
-        updateTimerDisplay(data.remaining, 'joining');
-      }
-    });
-
     socket.on('room:started', (data) => {
       if (data && data.deadline) gdDeadline = data.deadline;
-      startDiscussion(data?.message || 'Group Discussion started!');
+      switchViewToActive();
+      appendSystemMessage('🚀 Group Discussion is now ACTIVE. Participants may speak.');
+      syncDeadlineTimer(gdDeadline, data?.duration || 300);
+      AppUtils.showToast('🚀 Group Discussion has started! Good luck!', 'success', 3500);
     });
 
     socket.on('room:timer', (data) => {
@@ -514,6 +496,14 @@ const HumanRoom = (() => {
       statusBadge.className = 'badge badge-warning';
     }
 
+    const headerTimer = document.getElementById('timer-display');
+    if (headerTimer) {
+      headerTimer.textContent = 'READY';
+      headerTimer.className = 'timer-display';
+    }
+    const timerLabel = document.getElementById('timer-label');
+    if (timerLabel) timerLabel.textContent = 'Lobby Status';
+
     // Toggle Host vs Participant Lobby view strictly based on authoritative isHost
     const hostControls = document.getElementById('lobby-host-controls');
     const participantNotice = document.getElementById('lobby-participant-notice');
@@ -536,6 +526,9 @@ const HumanRoom = (() => {
       statusBadge.textContent = '🔴 LIVE GD';
       statusBadge.className = 'badge badge-danger';
     }
+
+    const timerLabel = document.getElementById('timer-label');
+    if (timerLabel) timerLabel.textContent = 'Discussion Timer';
 
     const hostEndBtn = document.getElementById('btn-host-end-gd');
     if (hostEndBtn) hostEndBtn.style.display = isHost ? 'inline-flex' : 'none';
@@ -600,34 +593,20 @@ const HumanRoom = (() => {
     const s = sec % 60;
     const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 
-    if (timerType === 'joining') {
-      const lobbyTimer = document.getElementById('lobby-countdown-timer');
-      if (lobbyTimer) lobbyTimer.textContent = timeStr;
-
-      const headerTimer = document.getElementById('timer-display');
-      if (headerTimer) {
-        headerTimer.textContent = timeStr;
-        headerTimer.className = 'timer-display' + (sec <= 30 ? ' danger' : sec <= 60 ? ' warning' : '');
-      }
-
-      const timerLabel = document.getElementById('timer-label');
-      if (timerLabel) timerLabel.textContent = 'Joining closes in';
-    } else {
-      const headerTimer = document.getElementById('timer-display');
-      if (headerTimer) {
-        headerTimer.textContent = timeStr;
-        headerTimer.className = 'timer-display' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
-      }
-
-      const activeTimer = document.getElementById('active-gd-timer');
-      if (activeTimer) {
-        activeTimer.textContent = timeStr;
-        activeTimer.className = 'active-gd-timer-badge' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
-      }
-
-      const timerLabel = document.getElementById('timer-label');
-      if (timerLabel) timerLabel.textContent = 'Discussion ends in';
+    const headerTimer = document.getElementById('timer-display');
+    if (headerTimer) {
+      headerTimer.textContent = timeStr;
+      headerTimer.className = 'timer-display' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
     }
+
+    const activeTimer = document.getElementById('active-gd-timer');
+    if (activeTimer) {
+      activeTimer.textContent = timeStr;
+      activeTimer.className = 'active-gd-timer-badge' + (sec <= 60 ? ' danger' : sec <= 120 ? ' warning' : '');
+    }
+
+    const timerLabel = document.getElementById('timer-label');
+    if (timerLabel) timerLabel.textContent = 'Discussion Timer';
   }
 
   function renderParticipants() {
@@ -1099,11 +1078,11 @@ const HumanRoom = (() => {
     const url = getProductionJoinUrl(code);
 
     const message =
-`Join my IntelliGD Human Group Discussion.
+`IntelliGD Human GD invitation
 
+Topic: ${topic || 'Group Discussion'}
 Room Code: ${code}
-
-Join here: ${url}`;
+Join Link: ${url}`;
 
     const encoded = encodeURIComponent(message);
     window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');

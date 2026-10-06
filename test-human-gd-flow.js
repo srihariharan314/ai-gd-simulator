@@ -146,24 +146,23 @@ async function runTests() {
     // ─────────────────────────────────────────────────────────────
     console.log('\n--- TEST 4: WhatsApp invitation message formatting ---');
     const waUrl = `${baseUrl}/human-gd/join/${createdRoom.room_code}`;
-    const expectedWaMsg = `Join my IntelliGD Human Group Discussion.\n\nRoom Code: ${createdRoom.room_code}\n\nJoin here: ${waUrl}`;
+    const expectedWaMsg = `IntelliGD Human GD invitation\n\nTopic: ${createdRoom.topic}\nRoom Code: ${createdRoom.room_code}\nJoin Link: ${waUrl}`;
     const encodedWa = encodeURIComponent(expectedWaMsg);
     assert(encodedWa.includes(encodeURIComponent(createdRoom.room_code)), 'WhatsApp message correctly encodes room code');
     assert(encodedWa.includes(encodeURIComponent(waUrl)), 'WhatsApp message includes direct join URL');
 
     // ─────────────────────────────────────────────────────────────
-    // TEST 5 — Real-time Sockets & Joining Timer Countdown
+    // TEST 5 — Real-time Sockets & Host/Participant Role Synchronization
     // ─────────────────────────────────────────────────────────────
-    console.log('\n--- TEST 5: Sockets connect & joining countdown tick ---');
+    console.log('\n--- TEST 5: Sockets connect & Host/Participant Role Synchronization ---');
     let hostSocket = ioClient(baseUrl, { forceNew: true });
     let part1Socket = ioClient(baseUrl, { forceNew: true });
 
     let hostJoinedData = null;
     let part1JoinedData = null;
-    let receivedJoiningTimer = false;
 
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Test 5 timeout waiting for room:joining_timer')), 6000);
+      const timer = setTimeout(() => reject(new Error('Test 5 timeout waiting for socket room:joined')), 6000);
 
       hostSocket.on('connect', () => {
         hostSocket.emit('room:create', {
@@ -187,10 +186,6 @@ async function runTests() {
 
       part1Socket.on('room:joined', (data) => {
         part1JoinedData = data;
-      });
-
-      hostSocket.on('room:joining_timer', (tData) => {
-        receivedJoiningTimer = true;
         clearTimeout(timer);
         resolve();
       });
@@ -205,7 +200,7 @@ async function runTests() {
 
     assert(hostJoinedData && hostJoinedData.isHost === true, 'Host socket received room:joined with isHost=true');
     assert(part1JoinedData && part1JoinedData.isHost === false, 'Participant socket received room:joined with isHost=false');
-    assert(receivedJoiningTimer, 'Server emitted room:joining_timer countdown');
+    assert(hostJoinedData.status === 'WAITING_FOR_PARTICIPANTS', 'Room remains in WAITING_FOR_PARTICIPANTS with no auto-timeout');
 
     // ─────────────────────────────────────────────────────────────
     // TEST 6 & 7 — Host Manual Start vs Unauthorized Start

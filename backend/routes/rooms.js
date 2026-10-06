@@ -104,8 +104,8 @@ router.post('/', authMiddleware, async (req, res) => {
     attempts++;
   }
 
-  // Single authoritative server-side joining deadline
-  const joinDeadline = new Date(Date.now() + joinSec * 1000).toISOString();
+  // No automatic joining deadline - host decides when to start
+  const joinDeadline = null;
 
   // Generate rich topic context
   let topicContent = '';
@@ -126,12 +126,12 @@ router.post('/', authMiddleware, async (req, res) => {
     `).run(hostUserId, cleanTopic, category, roomId);
     const hostSessionId = sessionRes.lastInsertRowid;
 
-    // 2. Insert room record with authoritative host_id, join_deadline, and session_id
+    // 2. Insert room record with authoritative host_id and session_id (no auto joining deadline)
     db.prepare(`
       INSERT INTO human_rooms
       (room_id, room_code, host_id, session_id, topic, category, topic_content, joining_duration, join_deadline, gd_duration, max_participants, status, joining_started_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(roomId, roomCode, hostUserId, hostSessionId, cleanTopic, category, topicContent, joinSec, joinDeadline, gdSec, maxPart);
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 'WAITING_FOR_PARTICIPANTS', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(roomId, roomCode, hostUserId, hostSessionId, cleanTopic, category, topicContent, gdSec, maxPart);
 
     // 3. Register host as first participant with role: 'host'
     const hostName = req.user.name || 'Host';
@@ -185,22 +185,6 @@ router.get('/validate/:code', (req, res) => {
     return res.status(400).json({ valid: false, error: 'This GD has already started. New participants cannot join.', reason: 'already_started' });
   }
 
-  if (room.status === 'EXPIRED') {
-    return res.status(400).json({ valid: false, error: 'This GD is no longer accepting participants.', reason: 'expired' });
-  }
-
-  // Check deadline
-  if (room.join_deadline && new Date(room.join_deadline).getTime() < Date.now() && room.status === 'WAITING_FOR_PARTICIPANTS') {
-    const participantCount = db.prepare(`
-      SELECT COUNT(*) as count FROM room_participants WHERE room_id = ? AND connection_status != 'left'
-    `).get(room.room_id).count;
-
-    if (participantCount < 2) {
-      db.prepare("UPDATE human_rooms SET status = 'EXPIRED' WHERE room_id = ?").run(room.room_id);
-      return res.status(400).json({ valid: false, error: 'This GD is no longer accepting participants.', reason: 'expired' });
-    }
-  }
-
   // Check capacity
   const countRes = db.prepare(`
     SELECT COUNT(*) as count FROM room_participants WHERE room_id = ? AND connection_status != 'left'
@@ -209,8 +193,6 @@ router.get('/validate/:code', (req, res) => {
   if (countRes.count >= room.max_participants) {
     return res.status(400).json({ valid: false, error: 'This GD is full.', reason: 'full' });
   }
-
-  const remainingJoining = Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - Date.now()) / 1000));
 
   return res.json({
     valid: true,
@@ -223,10 +205,7 @@ router.get('/validate/:code', (req, res) => {
       max_participants: room.max_participants,
       current_participants: countRes.count,
       status: room.status,
-      joining_duration: room.joining_duration,
-      gd_duration: room.gd_duration,
-      join_deadline: room.join_deadline,
-      remaining_joining_seconds: remainingJoining
+      gd_duration: room.gd_duration
     }
   });
 });
@@ -239,13 +218,7 @@ router.get('/:roomId/sync', authMiddleware, (req, res) => {
     return res.status(404).json({ error: 'Room not found.' });
   }
 
-  // Calculate live deadlines
   const now = Date.now();
-  let remainingJoining = 0;
-  if (room.join_deadline) {
-    remainingJoining = Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - now) / 1000));
-  }
-
   let remainingGd = room.gd_duration || 300;
   if (room.status === 'ACTIVE') {
     if (room.gd_deadline) {
@@ -253,18 +226,6 @@ router.get('/:roomId/sync', authMiddleware, (req, res) => {
     } else if (room.started_at) {
       const elapsed = Math.floor((now - new Date(room.started_at).getTime()) / 1000);
       remainingGd = Math.max(0, (room.gd_duration || 300) - elapsed);
-    }
-  }
-
-  // Auto-start if joining time expired and at least 2 participants joined
-  if (room.status === 'WAITING_FOR_PARTICIPANTS' && remainingJoining <= 0) {
-    const pCount = db.prepare(`SELECT COUNT(*) as count FROM room_participants WHERE room_id = ? AND connection_status != 'left'`).get(room.room_id).count;
-    if (pCount >= 2) {
-      const gdDeadline = new Date(Date.now() + (room.gd_duration || 300) * 1000).toISOString();
-      db.prepare("UPDATE human_rooms SET status = 'ACTIVE', started_at = CURRENT_TIMESTAMP, gd_deadline = ? WHERE room_id = ?").run(gdDeadline, room.room_id);
-      room.status = 'ACTIVE';
-      room.gd_deadline = gdDeadline;
-      remainingGd = room.gd_duration || 300;
     }
   }
 
@@ -298,15 +259,12 @@ router.get('/:roomId/sync', authMiddleware, (req, res) => {
       category: room.category,
       status: room.status,
       host_id: room.host_id,
-      joining_duration: room.joining_duration,
-      join_deadline: room.join_deadline,
       gd_duration: room.gd_duration,
       gd_deadline: room.gd_deadline,
       started_at: room.started_at,
       ended_at: room.ended_at
     },
     isHost,
-    remaining_joining_seconds: remainingJoining,
     remaining_gd_seconds: remainingGd,
     server_time: new Date().toISOString(),
     participants,
@@ -345,17 +303,12 @@ router.get('/:roomId', authMiddleware, (req, res) => {
     try { parsedContent = JSON.parse(room.topic_content); } catch { parsedContent = null; }
   }
 
-  const remainingJoining = room.join_deadline
-    ? Math.max(0, Math.floor((new Date(room.join_deadline).getTime() - Date.now()) / 1000))
-    : (room.joining_duration || 120);
-
   res.json({
     room,
     topicContent: parsedContent,
     participants,
     isHost,
     hostId: room.host_id,
-    remaining_joining_seconds: remainingJoining,
     currentUser: {
       userId: req.user.user_id,
       name: req.user.name,
@@ -408,9 +361,6 @@ router.post('/:roomId/join', authMiddleware, (req, res) => {
     }
     if (room.status === 'CANCELLED') {
       return res.status(400).json({ error: 'This GD has been cancelled.' });
-    }
-    if (room.status === 'EXPIRED') {
-      return res.status(400).json({ error: 'This GD is no longer accepting participants.' });
     }
 
     // Check capacity

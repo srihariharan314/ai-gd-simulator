@@ -98,13 +98,6 @@ function getOrInitRoom(identifier) {
   if (dbRoom) {
     const rId = dbRoom.room_id;
     if (!rooms[rId]) {
-      // Calculate remaining joining time
-      let joinRemaining = dbRoom.joining_duration || 120;
-      if (dbRoom.join_deadline) {
-        const msLeft = new Date(dbRoom.join_deadline).getTime() - Date.now();
-        joinRemaining = Math.max(0, Math.round(msLeft / 1000));
-      }
-
       rooms[rId] = {
         roomId: dbRoom.room_id,
         roomCode: dbRoom.room_code,
@@ -113,9 +106,6 @@ function getOrInitRoom(identifier) {
         category: dbRoom.category,
         maxParticipants: dbRoom.max_participants || 6,
         status: dbRoom.status || 'WAITING_FOR_PARTICIPANTS',
-        joiningDuration: dbRoom.joining_duration || 120,
-        joiningTimerRemaining: joinRemaining,
-        joiningInterval: null,
         gdDuration: dbRoom.gd_duration || 300,
         gdTimerRemaining: dbRoom.gd_duration || 300,
         gdInterval: null,
@@ -140,14 +130,8 @@ function startRoomDiscussion(roomId, reason = 'Discussion started!') {
   const room = rooms[roomId];
   if (!room || room.status === 'ACTIVE' || room.status === 'COMPLETED') return;
 
-  // Clear joining countdown
-  if (room.joiningInterval) {
-    clearInterval(room.joiningInterval);
-    room.joiningInterval = null;
-  }
-
   room.status = 'ACTIVE';
-  room.gdTimerRemaining = room.gdDuration;
+  room.gdTimerRemaining = room.gdDuration || 300;
   const gdDeadline = new Date(Date.now() + (room.gdDuration || 300) * 1000).toISOString();
   room.gdDeadline = gdDeadline;
 
@@ -168,18 +152,12 @@ function startRoomDiscussion(roomId, reason = 'Discussion started!') {
   });
   console.log(`🚀 Room ${room.roomCode} (${room.roomId}) is now ACTIVE!`);
 
-  // Start GD Duration countdown
+  // Start GD Duration timer (host can also end at any time)
   if (room.gdInterval) clearInterval(room.gdInterval);
   room.gdInterval = setInterval(() => {
     if (!rooms[room.roomId]) return;
     room.gdTimerRemaining--;
-    io.to(room.roomId).emit('room:timer', { remaining: room.gdTimerRemaining });
-
-    if (room.gdTimerRemaining <= 0) {
-      clearInterval(room.gdInterval);
-      room.gdInterval = null;
-      endRoomDiscussion(room.roomId, 'Discussion duration ended automatically!');
-    }
+    io.to(room.roomId).emit('room:timer', { remaining: Math.max(0, room.gdTimerRemaining) });
   }, 1000);
 }
 
@@ -190,8 +168,10 @@ async function endRoomDiscussion(roomId, reason = 'Discussion ended.') {
   const room = rooms[roomId];
   if (!room || room.status === 'COMPLETED') return;
 
-  if (room.joiningInterval) clearInterval(room.joiningInterval);
-  if (room.gdInterval) clearInterval(room.gdInterval);
+  if (room.gdInterval) {
+    clearInterval(room.gdInterval);
+    room.gdInterval = null;
+  }
   room.status = 'COMPLETED';
 
   // Update human_rooms in DB
@@ -369,22 +349,6 @@ io.on('connection', (socket) => {
       p.role = (p.userId && p.userId === room.hostId) ? 'host' : 'participant';
     });
 
-    // Start joining countdown if not already running and room is in lobby
-    if (room.status === 'WAITING_FOR_PARTICIPANTS' && !room.joiningInterval && room.joiningTimerRemaining > 0) {
-      room.joiningInterval = setInterval(() => {
-        if (!rooms[room.roomId]) return;
-        room.joiningTimerRemaining--;
-        io.to(room.roomId).emit('room:joining_timer', { remaining: room.joiningTimerRemaining });
-
-        if (room.joiningTimerRemaining <= 0) {
-          clearInterval(room.joiningInterval);
-          room.joiningInterval = null;
-          // Auto-start discussion
-          startRoomDiscussion(room.roomId, 'Joining time ended. Discussion automatically started!');
-        }
-      }, 1000);
-    }
-
     socket.emit('room:joined', {
       roomId: room.roomId,
       roomCode: room.roomCode,
@@ -393,7 +357,6 @@ io.on('connection', (socket) => {
       hostId: room.hostId,
       status: room.status,
       participants: room.participants,
-      joiningTimerRemaining: room.joiningTimerRemaining,
       gdTimerRemaining: room.gdTimerRemaining
     });
 
@@ -473,7 +436,6 @@ io.on('connection', (socket) => {
       hostId: room.hostId,
       status: room.status,
       participants: room.participants,
-      joiningTimerRemaining: room.joiningTimerRemaining,
       gdTimerRemaining: room.gdTimerRemaining
     });
 
